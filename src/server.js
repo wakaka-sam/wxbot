@@ -144,6 +144,10 @@ export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || 
         });
       }
       const files = { '/': ['index.html', 'text/html; charset=utf-8'],
+        '/connections': ['connections.html', 'text/html; charset=utf-8'],
+        '/connections/': ['connections.html', 'text/html; charset=utf-8'],
+        '/connections.js': ['connections.js', 'text/javascript; charset=utf-8'],
+        '/connections.css': ['connections.css', 'text/css; charset=utf-8'],
         '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
         '/style.css': ['style.css', 'text/css; charset=utf-8'],
         '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };

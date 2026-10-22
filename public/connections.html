@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>连接管理 · ClawBot Local</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/connections.css">
+</head>
+<body>
+  <aside class="rail">
+    <a class="brand" href="/connections"><img src="/favicon.svg" width="36" height="36" alt=""><span>ClawBot <b>Local</b></span></a>
+    <div class="rail-label">工作台</div>
+    <nav aria-label="主导航"><a class="nav-active" href="/connections" aria-current="page"><span aria-hidden="true">▦</span>连接管理</a><a href="/"><span aria-hidden="true">▤</span>消息收件箱</a></nav>
+    <div class="rail-note"><span class="dot"></span><div>运行在这台服务器<small>登录态与消息保存在本地</small></div></div>
+  </aside>
+  <main>
+    <header class="topbar"><span>工作台 <span class="slash">/</span> 连接管理</span><span id="sync-status" class="sync-status" role="status">正在连接服务…</span></header>
+    <div class="content">
+      <div class="page-heading"><div><p class="eyebrow">WECHAT CONNECTIONS</p><h1>每个连接，都在这里。</h1><p class="subtitle">统一管理微信账号，让每段对话各自延续。</p></div><button id="add-profile" class="primary"><span aria-hidden="true">＋</span> 新增连接</button></div>
+      <div id="network-error" class="notice danger" role="alert" hidden>暂时无法连接服务，当前展示的是上次状态。正在自动重试。</div>
+      <section class="metrics" aria-label="连接概览">
+        <div><span>全部连接</span><strong id="metric-total">—</strong><small>独立保存消息与会话</small></div>
+        <div><span><i class="dot"></i> 正在接收</span><strong id="metric-online">—</strong><small>微信消息实时同步</small></div>
+        <div><span><i class="dot amber"></i> 需要处理</span><strong id="metric-attention">—</strong><small>待扫码、登录失效或连接异常</small></div>
+      </section>
+      <section aria-labelledby="list-title">
+        <div class="list-heading"><h2 id="list-title">我的连接 <span id="list-count">0</span></h2><button id="refresh" class="text-button">↻ 刷新状态</button></div>
+        <div class="toolbar"><div class="filters" aria-label="连接状态"><button data-filter="all" aria-pressed="true">全部</button><button data-filter="online" aria-pressed="false">在线</button><button data-filter="attention" aria-pressed="false">需处理</button><button data-filter="paused" aria-pressed="false">已暂停</button></div><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" aria-label="搜索连接" placeholder="搜索名称或微信账号"></label></div>
+        <div id="connections" class="connections" aria-live="polite"></div>
+        <div id="empty" class="empty" hidden><span aria-hidden="true">⌕</span><h3>没有匹配的连接</h3><p>试试其他名称，或切换状态筛选。</p><button id="reset-filters" class="secondary">查看全部连接</button></div>
+      </section>
+      <div class="bottom-note"><span class="note-icon" aria-hidden="true">i</span><p>每个账号分别保存消息与 Codex 会话。切换查看不会中断其他账号。<br><span>此页面供本机管理员使用，所有连接共用服务器上的 Codex 登录。</span></p></div>
+      <footer><span>ClawBot Local · 连接管理</span><span id="last-sync">等待首次同步</span></footer>
+    </div>
+  </main>
+  <dialog id="name-dialog" class="small-dialog"><form id="name-form"><div class="dialog-heading"><h2 id="name-title">新增连接</h2><button class="icon-button" type="button" data-close="name-dialog" aria-label="关闭">×</button></div><p id="name-description">起个容易识别的名字，然后由对应微信账号扫码。</p><label for="profile-name">连接名称</label><input id="profile-name" maxlength="40" required autocomplete="off" placeholder="例如：我的微信、团队助手"><p id="name-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="secondary" data-close="name-dialog">取消</button><button id="name-submit" class="primary" type="submit">创建并扫码</button></div></form></dialog>
+  <dialog id="connection-dialog" class="connection-dialog">
+    <div class="dialog-heading"><div><p class="eyebrow">CONNECTION DETAILS</p><h2 id="detail-name">连接详情</h2></div><button class="icon-button" data-close="connection-dialog" aria-label="关闭连接详情">×</button></div>
+    <div id="detail-error" class="notice danger" role="alert" hidden></div>
+    <div class="detail-grid"><div class="detail-info"><span id="detail-badge" class="badge">读取中</span><h3 id="detail-title">正在读取连接状态…</h3><p id="detail-description" class="detail-description"></p><dl><dt>微信账号</dt><dd id="detail-account">尚未连接</dd><dt>Bot 标识</dt><dd id="detail-bot">—</dd><dt>自动回复</dt><dd id="detail-codex">—</dd></dl><button id="detail-auto" class="secondary" hidden>暂停自动回复</button><a id="detail-inbox" class="inbox-link" href="/">打开此账号的消息收件箱 →</a></div>
+      <div class="pairing"><div id="qr-wrap" class="qr-wrap"><img id="pairing-qr" alt="用对应用户的微信扫描此二维码" hidden><div id="pairing-placeholder"><span id="pairing-symbol" aria-hidden="true">▦</span><strong id="pairing-heading">连接你的微信</strong><p id="pairing-hint">生成二维码后，使用微信扫一扫。</p></div></div><p id="pairing-status" role="status"></p><form id="verify-form" hidden><label for="verify-code">微信显示的数字配对码</label><div><input id="verify-code" inputmode="numeric" pattern="[0-9]{1,12}" maxlength="12" autocomplete="one-time-code" required><button class="primary" type="submit">确认配对</button></div></form><button id="generate-qr" class="primary full">生成登录二维码</button><p class="pairing-note">二维码约 4 分钟有效。已绑定过的连接，请使用原微信账号扫码。</p></div>
+    </div>
+  </dialog>
+  <dialog id="disconnect-dialog" class="small-dialog"><form id="disconnect-form"><div class="dialog-heading"><h2>断开微信连接？</h2><button class="icon-button" type="button" data-close="disconnect-dialog" aria-label="关闭">×</button></div><p id="disconnect-description"></p><p class="muted">将停止此账号的当前任务和消息接收，保留历史记录。其他连接不受影响。</p><p id="disconnect-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="secondary" data-close="disconnect-dialog">取消</button><button id="disconnect-submit" class="danger-button" type="submit">确认断开</button></div></form></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="/connections.js"></script>
+</body>
+</html>

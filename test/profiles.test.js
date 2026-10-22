@@ -189,3 +189,23 @@ test('一个用户获取二维码缓慢时不阻塞另一用户的操作', async
     release(); await pending;
   } finally { release?.(); await app.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('管理页列表返回状态和数量，不携带消息内容或登录凭证', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'wxbot-dashboard-')), h = fixture(), app = await start(dir, h);
+  try {
+    await login(app, h, 'default', 'a');
+    await app.post('/api/codex/config', 'default', { enabled: false });
+    h.enqueue('a', 'private', 'private-message-not-for-dashboard');
+    await until(async () => (await app.state()).total === 1);
+    const response = await fetch(app.url('/api/profiles'));
+    const text = await response.text(), data = JSON.parse(text);
+    assert.equal(data.profiles[0].total, 1);
+    assert.equal(data.profiles[0].phase, 'connected');
+    assert.ok(data.profiles[0].lastReceived);
+    assert.ok(!text.includes('private-message-not-for-dashboard'));
+    assert.ok(!text.includes('secret-a'));
+    const page = await fetch(app.url('/connections'));
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get('content-security-policy'), /default-src 'self'/);
+  } finally { await app.close(); await rm(dir, { recursive: true, force: true }); }
+});

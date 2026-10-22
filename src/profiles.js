@@ -73,6 +73,8 @@ export class Profiles extends EventEmitter {
     return [...this.items.values()].map(p => {
       const account = p.store.get('account');
       return { id: p.id, name: p.name, phase: p.bridge.state.phase,
+        detail: p.bridge.state.detail, total: p.store.count(),
+        lastReceived: p.bridge.state.lastReceived,
         account: account ? { id: account.id, userId: account.userId } : null };
     });
   }
