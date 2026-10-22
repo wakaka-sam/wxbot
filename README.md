@@ -150,6 +150,8 @@ npm run release:pack -- HEAD
 
 `dist/` 生成 `wxbot-v<版本>.tar.gz`、`wxbot-v<版本>.zip` 和 `SHA256SUMS.txt`。脚本从指定 Git 提交读取版本并按文件清单归档，不复制工作目录的登录态、附件、聊天记录、截图、依赖或环境配置。用户安装 Release 不需要 Git。
 
+推送 `vX.Y.Z` 标签会触发 [Release 工作流](.github/workflows/release.yml)：核对标签与包版本、运行语法检查及两组测试、生成源码包与 SHA-256，再用 GitHub Actions 的仓库令牌创建 Release。先以草稿上传完整附件，成功后公开；已公开版本不会被覆盖。发布说明取自对应 CHANGELOG 段落。工作流失败时可重跑，或在 Actions 页手动输入已有标签补发。
+
 ## 本机消息台功能与边界
 
 - 完整扫码状态：获取、等待扫码、手机确认、配对码、节点跳转、过期重试。

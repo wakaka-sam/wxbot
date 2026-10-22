@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to publish (for example v1.0.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Validate tag and prepare release notes
+        run: node scripts/release-notes.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run test:platform
+      - name: Build source archives
+        run: npm run release:pack -- "$RELEASE_TAG"
+      - name: Verify archive checksums
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS.txt
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft > "$RUNNER_TEMP/release-state.json" 2>/dev/null; then
+            if ! node -e 'const fs=require("node:fs"); if(!JSON.parse(fs.readFileSync(process.argv[1],"utf8")).isDraft)process.exit(1)' "$RUNNER_TEMP/release-state.json"; then
+              echo 'Release is already public; refusing to replace published assets.'
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "wxbot $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          gh release upload "$RELEASE_TAG" --clobber \
+            "dist/wxbot-$RELEASE_TAG.tar.gz" "dist/wxbot-$RELEASE_TAG.zip" dist/SHA256SUMS.txt
+          gh release edit "$RELEASE_TAG" --draft=false --latest

@@ -11,7 +11,7 @@ const commit = git(['rev-parse', '--verify', `${ref}^{commit}`]);
 const { version } = JSON.parse(git(['show', `${commit}:package.json`]));
 if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) throw new Error('Invalid package version');
 // Explicit manifest; data, node_modules, screenshots and machine configuration are never included.
-const manifest = ['.gitignore', 'README.md', 'CHANGELOG.md', 'package.json', 'package-lock.json', 'src', 'public', 'test', 'scripts', 'docs', 'deploy'];
+const manifest = ['.gitignore', '.github/workflows', 'README.md', 'CHANGELOG.md', 'package.json', 'package-lock.json', 'src', 'public', 'test', 'scripts', 'docs', 'deploy'];
 const files = git(['ls-tree', '-r', '--name-only', commit, '--', ...manifest]).split('\n');
 for (const file of files) {
   if (/(^|\/)(data|node_modules|test-results|dist|\.env[^/]*)(\/|$)|\.(sqlite(?:-wal|-shm)?|log)$/.test(file)) throw new Error(`Excluded file in release: ${file}`);
