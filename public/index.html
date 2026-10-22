@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClawBot Local · 本地消息台</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"></head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="ClawBot Local 首页"><img src="/favicon.svg" alt="" width="38" height="38"><span>ClawBot <b>Local</b></span></a>
+    <div class="workspace-label">本地工作台</div>
+    <div class="nav-item"><span class="nav-icon">▤</span> 消息收件箱 <span id="side-count" class="count">0</span></div>
+    <section class="connection" aria-labelledby="connection-title">
+      <div class="section-heading"><h2 id="connection-title">微信连接</h2><span id="status" class="badge" data-phase="offline">未连接</span></div>
+      <div id="qr-area" class="qr-area">
+        <div id="qr-placeholder" class="qr-placeholder"><svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><path d="M8 23V8h15M41 8h15v15M56 41v15H41M23 56H8V41" stroke="currentColor" stroke-width="3"/><path d="M19 19h9v9h-9zM36 19h9v9h-9zM19 36h9v9h-9zM37 37h8v8h-8z" stroke="currentColor" stroke-width="2"/></svg><span>连接你的微信</span></div>
+        <img id="qr-image" alt="使用微信扫一扫连接 ClawBot" hidden>
+        <div id="linked-mark" class="linked-mark" hidden><span>✓</span><strong>微信已连接</strong><small id="account-name"></small></div>
+      </div>
+      <p id="connection-detail" class="connection-detail" role="status">扫码连接微信，开始接收消息</p>
+      <form id="verify-form" class="verify-form" hidden><label for="verify-code">手机微信显示的配对码</label><div><input id="verify-code" inputmode="numeric" pattern="[0-9]{1,12}" maxlength="12" autocomplete="one-time-code" required><button class="primary" type="submit">确认</button></div></form>
+      <button id="login" class="primary full">生成登录二维码 <span>↗</span></button>
+      <button id="toggle" class="secondary full" hidden>暂停接收</button>
+      <button id="logout" class="text-button full" hidden>断开并退出登录</button>
+      <ol class="steps"><li><span>1</span>生成二维码，用微信扫一扫</li><li><span>2</span>在手机上确认连接</li><li><span>3</span>向 ClawBot 发消息，在这里查看</li></ol>
+    </section>
+    <div class="sidebar-footer"><span class="local-dot"></span><div>在这台电脑上运行<small>消息和登录态保存在本地</small></div></div>
+  </aside>
+  <main>
+    <header class="topbar"><span><span class="breadcrumb">工作台</span><span class="slash">/</span>消息收件箱</span><span id="stream-status" class="stream-status"><i></i>正在连接本地服务</span></header>
+    <section class="inbox">
+      <div class="title-row"><div><div class="eyebrow">WECHAT INBOX</div><h1>消息收件箱<span id="heading-count">0</span></h1><p>从微信发来，实时出现在这里。</p></div><a href="/api/export" class="secondary export" download><span>↓</span> 导出记录</a></div>
+      <section id="codex-panel" class="codex-panel" aria-labelledby="codex-heading" hidden>
+        <div class="codex-title"><div><h2 id="codex-heading">Codex 持续会话</h2><p id="codex-status">微信消息自动交给 Codex，最终回复发回微信。</p></div><button id="codex-toggle" class="secondary">暂停自动回复</button></div>
+        <div class="codex-session"><span id="codex-thread">首条新消息时创建会话</span><div><button id="codex-new" class="text-button">新建会话</button><button id="codex-stop" class="text-button">停止任务</button></div></div>
+        <div id="codex-activity" class="codex-activity" role="status">等待微信消息</div>
+        <p id="codex-typing" class="typing-status" role="status" hidden></p>
+        <pre id="codex-preview" class="codex-preview" hidden></pre>
+        <details class="codex-settings"><summary>工作目录与模型</summary><form id="codex-config"><label for="codex-cwd">工作目录（Codex 可以修改此目录内的文件）</label><input id="codex-cwd" required placeholder="工作目录的绝对路径"><label for="codex-model">模型</label><input id="codex-model" placeholder="留空沿用本机 Codex 配置"><button type="submit" class="secondary">保存设置</button></form><p>消息按顺序执行。/new 新会话 · /stop 停止 · /status 状态 · /help 帮助</p></details>
+        <details class="codex-history"><summary>最近处理记录</summary><div id="codex-jobs"></div></details>
+      </section>
+      <div class="toolbar"><div class="filters" aria-label="消息类型"><button class="filter active" data-filter="all" aria-pressed="true">全部消息</button><button class="filter" data-filter="text" aria-pressed="false">文字</button><button class="filter" data-filter="media" aria-pressed="false">附件</button></div><label class="search"><span>⌕</span><input id="search" type="search" placeholder="搜索消息内容" aria-label="搜索消息内容"><kbd>/</kbd></label></div>
+      <div class="list-meta"><span id="list-info">最近 0 条消息</span><div><label class="follow"><input id="follow" type="checkbox" checked>自动跟随</label><button id="clear" class="text-button">清空记录</button></div></div>
+      <div id="messages" class="messages" aria-label="接收的消息列表" aria-live="polite"></div>
+      <div id="empty" class="empty"><div class="empty-illustration"><div class="bubble small">···</div><div class="bubble large"><span></span><span></span><span></span></div><div class="check">↓</div></div><h2 id="empty-title">等待第一条消息</h2><p id="empty-description">连接微信后，向 ClawBot 发送一条消息。<br>文字、图片和文件都会显示在这里。</p><div class="flow"><span>微信 ClawBot</span><i>→</i><span>本地消息台</span></div></div>
+      <form id="send-form" class="composer" aria-label="发送微信消息">
+        <div class="composer-heading"><label for="send-text">发送到微信</label><span id="send-recipient">当前扫码绑定的微信账号</span></div>
+        <textarea id="send-text" rows="3" maxlength="4000" placeholder="输入消息，发送给微信上的 ClawBot 对话" aria-describedby="send-hint send-error"></textarea>
+        <p id="send-error" class="send-error" role="alert" hidden></p>
+        <div class="composer-actions"><span id="send-hint">连接微信后即可发送文字</span><div><span id="send-count">0 / 4000</span><button id="send-button" class="primary" type="submit" disabled>发送消息 ↑</button></div></div>
+      </form>
+      <form id="media-form" class="media-composer" aria-label="发送微信附件">
+        <div><label for="send-file">发送图片、文件或视频</label><p>每次一个附件，最多 20 MB。与上方文字分别发送。</p></div>
+        <input id="send-file" type="file" aria-label="选择要发送的附件">
+        <div class="media-actions"><label for="send-kind">发送方式</label><select id="send-kind"><option value="auto">自动识别</option><option value="image">图片</option><option value="video">视频（MP4）</option><option value="file">文件附件</option></select><button id="media-send" class="secondary" type="submit" disabled>发送附件 ↑</button></div>
+        <p id="media-error" class="send-error" role="alert" hidden></p>
+      </form>
+      <footer class="inbox-footer"><span id="last-received">还没有收到消息</span><span>仅本机访问 <span class="footer-dot">·</span> 127.0.0.1</span></footer>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="confirm-dialog"><form method="dialog"><h2>清空本地消息？</h2><p>本地消息、处理记录和附件会删除，当前任务会停止。微信连接和 Codex 会话上下文保留；清除上下文请另点「新建会话」。此操作无法撤销。</p><div class="dialog-actions"><button class="secondary" value="cancel">取消</button><button class="primary" value="confirm">清空记录</button></div></form></dialog>
+  <script type="module" src="/app.js"></script>
+</body></html>
