@@ -80,6 +80,7 @@ export class Bridge extends EventEmitter {
         } else if (result.status === 'binded_redirect') {
           if (!this.store.get('account')) throw new Error('微信提示已绑定，但本机没有凭证，请在手机上断开原连接后重试');
           this.resume();
+          this.emit('paired');
           return;
         } else if (result.status === 'scaned_but_redirect') {
           if (!result.redirect_host) throw new Error('微信未返回扫码节点地址，请重试');
@@ -97,6 +98,7 @@ export class Bridge extends EventEmitter {
           this.store.set('account', account);
           this.update({ qr: null });
           this.resume();
+          this.emit('paired');
           return;
         } else if (result.status === 'wait' && this.state.phase !== 'scanned') {
           this.update({ detail: '请使用微信扫一扫' });
@@ -278,6 +280,7 @@ export class Bridge extends EventEmitter {
         failures = 0;
         this.update({ phase: 'connected', detail: '正在实时接收微信消息',
           ...(added.length ? { lastReceived: added.at(-1).receivedAt } : {}) });
+        if (added.length) this.emit('messages', added);
         this.codex?.wake();
         await delay(this.pollDelay, undefined, { signal });
       } catch (error) {

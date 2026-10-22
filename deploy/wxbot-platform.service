@@ -1,0 +1,20 @@
+[Unit]
+Description=ClawBot authenticated assistant platform
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/workspace/wxbot
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/wxbot-platform.env
+ExecStart=/usr/bin/node /root/workspace/wxbot/src/platform/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

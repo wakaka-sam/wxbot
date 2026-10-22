@@ -5,12 +5,12 @@ import { EventEmitter } from 'node:events';
 // Codex CLI's stdio app-server protocol; no shell/TUI keystrokes are involved.
 export class CodexClient extends EventEmitter {
   constructor({ command = process.env.CLAWBOT_CODEX_BIN || 'codex', cwd, args = [], requestTimeout = 30000,
-    turnTimeout = 15 * 60 * 1000 } = {}) {
+    turnTimeout = 15 * 60 * 1000, env = process.env } = {}) {
     super();
     Object.assign(this, { requestTimeout, turnTimeout });
     this.pending = new Map(); this.nextId = 1; this.active = null; this.dead = false;
     this.child = spawn(command, [...args, 'app-server', '--listen', 'stdio://'], {
-      cwd, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+      cwd, env: { ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
     this.lines = createInterface({ input: this.child.stdout });
     this.lines.on('line', line => {
@@ -70,43 +70,50 @@ export class CodexClient extends EventEmitter {
     }
     const active = this.active, p = message.params || {};
     if (!active || p.threadId !== active.threadId || (active.turnId && p.turnId && active.turnId !== p.turnId)) return;
-    if (message.method === 'turn/started') active.turnId = p.turn?.id || p.turnId;
+    if (message.method === 'turn/started') { active.turnId = p.turn?.id || p.turnId; active.onEvent?.({ type: 'started', turnId: active.turnId }); }
     if (message.method === 'item/agentMessage/delta') {
       const item = active.items.get(p.itemId) || { text: '' };
       item.text += p.delta || ''; active.items.set(p.itemId, item);
+      active.onEvent?.({ type: 'delta', itemId: p.itemId, delta: p.delta || '', phase: item.phase });
       active.onProgress?.({ draft: item.text.slice(-20000), activity: 'Codex 正在回复…', turnId: active.turnId });
     }
     if (message.method === 'item/started') {
+      if (p.item?.type === 'agentMessage') active.items.set(p.item.id, { text: p.item.text || '', phase: p.item.phase });
       if (p.item?.type === 'commandExecution') active.onProgress?.({ activity: `执行命令：${p.item.command || ''}`.slice(0, 1000) });
       if (p.item?.type === 'fileChange') active.onProgress?.({ activity: '正在修改工作目录中的文件…' });
     }
     if (message.method === 'item/completed' && p.item?.type === 'agentMessage') {
       active.items.set(p.item.id, { text: p.item.text || '', phase: p.item.phase });
+      active.onEvent?.({ type: 'message', itemId: p.item.id, text: p.item.text || '', phase: p.item.phase });
     }
     if (message.method === 'turn/completed') {
       if (active.turnId && p.turn?.id && p.turn.id !== active.turnId) return;
       const items = [...active.items.values()];
       const finals = items.filter(i => i.phase === 'final_answer');
       const text = (finals.length ? finals.map(i => i.text).join('\n\n') : items.at(-1)?.text || '').trim();
-      if (p.turn?.status !== 'completed') active.reject(new Error(p.turn?.status === 'interrupted' ? 'Codex 本轮已停止' : p.turn?.error?.message || 'Codex 本轮执行失败'));
+      if (p.turn?.status !== 'completed') active.reject(Object.assign(new Error(p.turn?.status === 'interrupted' ? 'Codex 本轮已停止' : p.turn?.error?.message || 'Codex 本轮执行失败'), { code: p.turn?.status }));
       else active.resolve({ text, turnId: p.turn.id });
     }
   }
-  async run({ threadId, input, cwd, onProgress }) {
+  async run({ threadId, input, cwd, onProgress, onEvent, turnOptions = {} }) {
     if (this.active) throw new Error('当前 Codex 轮次尚未结束');
     let timer;
     const done = new Promise((resolve, reject) => {
-      this.active = { threadId, items: new Map(), onProgress, resolve, reject };
+      this.active = { threadId, items: new Map(), onProgress, onEvent, resolve, reject };
       timer = setTimeout(() => reject(new Error('Codex 本轮执行超时，请检查任务后重试')), this.turnTimeout);
     });
     // Attach rejection handling before awaiting turn/start, since completion can race the RPC reply.
     done.catch(() => {});
     try {
-      const result = await this.request('turn/start', { threadId, cwd, input, approvalPolicy: 'never' });
+      const result = await this.request('turn/start', { ...turnOptions, threadId, cwd, input, approvalPolicy: 'never' });
       this.active.turnId ||= result.turn?.id;
+      onEvent?.({ type: 'started', turnId: this.active.turnId });
       onProgress?.({ turnId: this.active.turnId, activity: 'Codex 正在处理…' });
       return await done;
     } finally { clearTimeout(timer); this.active = null; }
+  }
+  async interrupt() {
+    if (this.active?.turnId && !this.dead) await this.request('turn/interrupt', { threadId: this.active.threadId, turnId: this.active.turnId });
   }
   fail(error) {
     this.dead = true;

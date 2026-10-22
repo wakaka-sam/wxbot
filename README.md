@@ -6,6 +6,12 @@
 
 基础消息收发无需 OpenClaw 或模型 API Key。开启 Codex 自动回复后，微信新消息会通过本机已登录的 Codex CLI 执行，并将最终回复发回微信。
 
+## 注册登录版助手平台
+
+新增独立平台入口：`npm run platform`，默认端口 **3211**。提供账号注册登录、每人最多 3 个激活助手、网页与微信共享 Codex 会话、实时输出、中断续聊、扫码问候/最近十条总结，以及管理员用户与历史视图。微信 Channel 与 AI Harness 分别封装，方便替换。
+
+首次启动需配置管理员密码与隔离执行器。完整配置、适配器契约和验证说明见 [平台部署文档](docs/PLATFORM.md)。此入口使用独立数据目录，原 3210 本机消息台继续保留；现有微信账号不会自动迁移。
+
 ## 快速安装
 
 当前版本：[v1.0.0](https://github.com/wakaka-sam/wxbot/releases/tag/v1.0.0) · [所有 Releases](https://github.com/wakaka-sam/wxbot/releases)。
