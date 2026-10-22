@@ -11,7 +11,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/server.js && node --check src/bridge.js && node --check src/weixin.js && node --check src/media.js && node --check src/store.js && node --check src/codex-client.js && node --check src/codex-manager.js && node --check public/app.js && node --check scripts/package-release.mjs",
+    "check": "node --check src/server.js && node --check src/profiles.js && node --check src/bridge.js && node --check src/weixin.js && node --check src/media.js && node --check src/store.js && node --check src/codex-client.js && node --check src/codex-manager.js && node --check public/app.js && node --check scripts/package-release.mjs",
     "release:pack": "node scripts/package-release.mjs"
   },
   "dependencies": {

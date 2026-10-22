@@ -3,6 +3,13 @@ let state = { messages: [], total: 0, phase: 'offline' };
 let filter = 'all', fingerprint = '', busy = false, toastTimer;
 let sending = false, pendingSend = null, streamConnected = false;
 let pendingMedia = null, sendingMedia = false;
+let profileId = 'default', profilesStamp = '', stream, renaming = false;
+const drafts = new Map();
+function profileURL(path, id = profileId) {
+  const url = new URL(path, location.origin);
+  url.searchParams.set('profile', id);
+  return url.pathname + url.search;
+}
 const names = { offline: '未连接', loading: '获取中', waiting: '等待扫码', scanned: '等待确认',
   verifying: '输入配对码', connecting: '连接中', connected: '已连接', reconnecting: '重连中', paused: '已暂停', expired: '已过期', error: '连接失败' };
 const dates = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -39,7 +46,7 @@ function renderMessage(message) {
   for (const attachment of message.attachments || []) {
     const container = node('div', 'attachment');
     if (attachment.id) {
-      const url = `/media/${attachment.id}`;
+      const url = profileURL(`/media/${attachment.id}`);
       if (attachment.mime.startsWith('image/')) {
         const image = node('img'); image.src = url; image.alt = attachment.name; image.loading = 'lazy';
         container.append(image);
@@ -47,7 +54,7 @@ function renderMessage(message) {
         const video = node('video'); video.src = url; video.controls = true; video.preload = 'metadata'; container.append(video);
       }
       const link = node('a', '', `↓ ${attachment.name} · ${Math.max(1, Math.round(attachment.size / 1024))} KB`);
-      link.href = `${url}?download=1`; link.download = attachment.name; container.append(link);
+      link.href = `${url}&download=1`; link.download = attachment.name; container.append(link);
       if (attachment.kind === 'voice') container.append(node('small', '', '原始微信语音（SILK），可下载保存'));
     } else { container.append(node('span', '', attachment.name), node('small', '', attachment.error || '暂无可预览内容')); }
     content.append(container);
@@ -90,6 +97,20 @@ function renderMessages() {
   $('#clear').disabled = busy || state.total === 0;
 }
 function render() {
+  const profiles = state.profiles || [{ id: profileId, name: '默认用户', phase: state.phase }];
+  const stamp = JSON.stringify(profiles);
+  if (stamp !== profilesStamp) {
+    $('#profile-select').replaceChildren(...profiles.map(p => {
+      const option = node('option', '', `${p.name} · ${names[p.phase] || p.phase}`);
+      option.value = p.id; return option;
+    }));
+    profilesStamp = stamp;
+  }
+  $('#profile-select').value = profileId;
+  $('#profile-select').disabled = busy;
+  $('#profile-add').disabled = busy;
+  $('#profile-rename').disabled = busy;
+  $('#export').href = profileURL('/api/export');
   const phase = state.phase;
   const hasAccount = Boolean(state.account);
   $('#status').textContent = names[phase] || phase; $('#status').dataset.phase = phase;
@@ -176,8 +197,8 @@ async function sendMessage(event) {
   $('#send-error').hidden = true;
   render();
   try {
-    const response = await fetch('/api/send', { method: 'POST', headers: { 'X-Clawbot-Local': '1', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: pendingSend.text, requestId: pendingSend.requestId }) });
+    const response = await fetch(profileURL('/api/send'), { method: 'POST', headers: { 'X-Clawbot-Local': '1', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: pendingSend.text, requestId: pendingSend.requestId, accountId: pendingSend.accountId }) });
     const data = await response.json();
     if (!response.ok) { pendingSend = null; throw new Error(data.error || '发送失败'); }
     state = data;
@@ -204,7 +225,7 @@ async function sendAttachment(event) {
   if (pendingMedia.accountId !== state.account.id) { pendingMedia = null; toast('微信账号已变更，请确认后重新发送'); renderComposer(); return; }
   busy = sendingMedia = true; $('#media-error').hidden = true; render();
   try {
-    const response = await fetch('/api/send-media', { method: 'POST', headers: {
+    const response = await fetch(profileURL('/api/send-media'), { method: 'POST', headers: {
       'X-Clawbot-Local': '1', 'Content-Type': 'application/octet-stream',
       'X-File-Name': encodeURIComponent(pendingMedia.file.name), 'X-File-Kind': pendingMedia.kind,
       'X-Request-Id': pendingMedia.requestId, 'X-Account-Id': pendingMedia.accountId,
@@ -231,7 +252,7 @@ async function command(path, body) {
   if (busy) return;
   busy = true; render();
   try {
-    const response = await fetch(`/api/${path}`, { method: 'POST', headers: { 'X-Clawbot-Local': '1', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const response = await fetch(profileURL(`/api/${path}`), { method: 'POST', headers: { 'X-Clawbot-Local': '1', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || '操作失败');
     state = data;
@@ -260,8 +281,84 @@ document.querySelectorAll('.filter').forEach(button => button.addEventListener('
 document.addEventListener('keydown', event => {
   if (event.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) { event.preventDefault(); $('#search').focus(); }
 });
-const stream = new EventSource('/api/events');
-stream.addEventListener('open', () => { streamConnected = true; renderComposer(); $('#stream-status').classList.add('live'); $('#stream-status').replaceChildren(node('i'), document.createTextNode('本地服务已连接')); });
-stream.addEventListener('snapshot', event => { state = JSON.parse(event.data); render(); });
-stream.addEventListener('error', () => { streamConnected = false; renderComposer(); $('#stream-status').classList.remove('live'); $('#stream-status').replaceChildren(node('i'), document.createTextNode('服务断开，正在重连')); });
-render();
+function connectStream() {
+  stream?.close();
+  const id = profileId;
+  const current = stream = new EventSource(profileURL('/api/events', id));
+  const isCurrent = () => stream === current && profileId === id;
+  current.addEventListener('open', () => {
+    if (!isCurrent()) return;
+    streamConnected = true; render();
+    $('#stream-status').classList.add('live');
+    $('#stream-status').replaceChildren(node('i'), document.createTextNode('本地服务已连接'));
+  });
+  current.addEventListener('snapshot', event => {
+    if (!isCurrent()) return;
+    state = JSON.parse(event.data); render();
+  });
+  current.addEventListener('error', () => {
+    if (!isCurrent()) return;
+    streamConnected = false; render();
+    $('#stream-status').classList.remove('live');
+    $('#stream-status').replaceChildren(node('i'), document.createTextNode('服务断开，正在重连'));
+  });
+}
+async function selectProfile(id, snapshot) {
+  if (busy) return;
+  busy = true;
+  stream?.close(); stream = null; streamConnected = false;
+  render();
+  try {
+    if (!snapshot) {
+      const response = await fetch(profileURL('/api/state', id));
+      snapshot = await response.json();
+      if (!response.ok) throw new Error(snapshot.error || '无法切换用户');
+    }
+    if (id !== profileId) {
+      drafts.set(profileId, { text: $('#send-text').value, pendingSend, pendingMedia,
+        files: $('#send-file').files, kind: $('#send-kind').value });
+      const draft = drafts.get(id);
+      $('#send-text').value = draft?.text || '';
+      $('#send-file').value = '';
+      if (draft?.files) $('#send-file').files = draft.files;
+      $('#send-kind').value = draft?.kind || 'auto';
+      pendingSend = draft?.pendingSend || null; pendingMedia = draft?.pendingMedia || null;
+      $('#send-error').hidden = $('#media-error').hidden = true;
+      $('#verify-code').value = ''; $('#search').value = '';
+      fingerprint = ''; codexConfigStamp = '';
+    }
+    profileId = id; state = snapshot;
+    history.replaceState(null, '', profileURL('/', id));
+  } catch (error) { toast(error.message); }
+  finally { busy = false; connectStream(); render(); }
+}
+$('#profile-select').addEventListener('change', event => selectProfile(event.target.value));
+function editProfile(rename) {
+  renaming = rename;
+  $('#profile-dialog-title').textContent = rename ? '重命名用户' : '新增用户';
+  $('#profile-name').value = rename ? state.profile.name : '';
+  $('#profile-error').hidden = true;
+  $('#profile-dialog').showModal(); $('#profile-name').focus();
+}
+$('#profile-add').addEventListener('click', () => editProfile(false));
+$('#profile-rename').addEventListener('click', () => editProfile(true));
+$('#profile-cancel').addEventListener('click', () => $('#profile-dialog').close());
+$('#profile-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (busy) return;
+  busy = true; render();
+  const button = $('#profile-form button[type=submit]'); button.disabled = true;
+  let data;
+  try {
+    const response = await fetch(profileURL(renaming ? '/api/profile' : '/api/profiles'), {
+      method: 'POST', headers: { 'X-Clawbot-Local': '1', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: $('#profile-name').value.trim() }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '保存失败');
+    data = result; $('#profile-dialog').close();
+  } catch (error) { $('#profile-error').hidden = false; $('#profile-error').textContent = error.message; }
+  finally { busy = false; button.disabled = false; render(); }
+  if (data) await selectProfile(data.profile.id, data);
+});
+selectProfile(new URLSearchParams(location.search).get('profile') || 'default');

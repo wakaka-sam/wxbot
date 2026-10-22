@@ -6,9 +6,9 @@ import { trustedBase } from './weixin.js';
 import { downloadMedia, describeMedia, saveMedia } from './media.js';
 
 export class Bridge extends EventEmitter {
-  constructor(store, api, dir, { media = downloadMedia, pollDelay = 300, retryDelay = 2000 } = {}) {
+  constructor(store, api, dir, { media = downloadMedia, pollDelay = 300, retryDelay = 2000, validateAccount = () => {} } = {}) {
     super();
-    Object.assign(this, { store, api, dir, media, pollDelay, retryDelay });
+    Object.assign(this, { store, api, dir, media, pollDelay, retryDelay, validateAccount });
     this.state = { phase: 'offline', detail: '扫码连接微信，开始接收消息', qr: null, lastReceived: null };
     this.jobs = new Set();
   }
@@ -93,6 +93,7 @@ export class Bridge extends EventEmitter {
           if (!result.bot_token || !result.ilink_bot_id) throw new Error('登录响应缺少账号信息，请重新扫码');
           const account = { id: result.ilink_bot_id, token: result.bot_token,
             userId: result.ilink_user_id, baseUrl: trustedBase(result.baseurl || base) };
+          this.validateAccount(account);
           this.store.set('account', account);
           this.update({ qr: null });
           this.resume();

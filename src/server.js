@@ -2,10 +2,8 @@ import http from 'node:http';
 import { readFile, rm, mkdir } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Store } from './store.js';
 import { Weixin } from './weixin.js';
-import { Bridge } from './bridge.js';
-import { CodexManager } from './codex-manager.js';
+import { Profiles } from './profiles.js';
 import { MAX_MEDIA_SIZE } from './media.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -17,20 +15,28 @@ const securityHeaders = {
 
 export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || join(root, 'data')),
   api = new Weixin(), bridgeOptions, codexOptions = false } = {}) {
-  const store = new Store(dir);
-  const bridge = new Bridge(store, api, dir, bridgeOptions);
-  const codex = codexOptions === false ? null : new CodexManager(store, bridge, dir, codexOptions);
-  bridge.codex = codex;
-  const clients = new Set();
-  function broadcast() {
-    const event = `event: snapshot\ndata: ${JSON.stringify(bridge.snapshot())}\n\n`;
-    for (const client of clients) {
-      if (client.writableLength > 1024 * 1024) client.destroy();
-      else client.write(event);
+  const profiles = new Profiles(dir, api, bridgeOptions, codexOptions);
+  await profiles.init();
+  const initial = profiles.items.get('default');
+  let closing = false, listStamp = '';
+  function broadcast(changed) {
+    const stamp = JSON.stringify(profiles.list());
+    const listChanged = stamp !== listStamp;
+    listStamp = stamp;
+    for (const profile of profiles.items.values()) {
+      if (profile !== changed && !listChanged) continue;
+      if (!profile.clients.size) continue;
+      const event = `event: snapshot\ndata: ${JSON.stringify(profiles.snapshot(profile))}\n\n`;
+      for (const client of profile.clients) {
+        if (client.writableLength > 1024 * 1024) client.destroy();
+        else client.write(event);
+      }
     }
   }
-  bridge.on('change', broadcast);
-  const heartbeat = setInterval(() => { for (const client of clients) client.write(': heartbeat\n\n'); }, 15000);
+  profiles.on('change', broadcast);
+  const heartbeat = setInterval(() => {
+    for (const profile of profiles.items.values()) for (const client of profile.clients) client.write(': heartbeat\n\n');
+  }, 15000);
   heartbeat.unref();
   const server = http.createServer(async (req, res) => {
     const send = (status, data, type = 'application/json; charset=utf-8', extra = {}) => {
@@ -47,6 +53,10 @@ export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || 
       }
       if (req.headers['sec-fetch-site'] === 'cross-site') return send(403, { error: '不允许跨站访问' });
       const url = new URL(req.url, `http://${req.headers.host}`);
+      const profile = profiles.items.get(url.searchParams.get('profile') ?? 'default');
+      if (!profile) return send(404, { error: '用户不存在，请刷新用户列表' });
+      const { store, bridge, codex, dir, clients } = profile;
+      const snapshot = () => profiles.snapshot(profile);
       if (req.method === 'POST') {
         if (req.headers['x-clawbot-local'] !== '1') return send(403, { error: '请从本地页面操作' });
         if (url.pathname === '/api/send-media') {
@@ -61,10 +71,10 @@ export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || 
           const delivery = await bridge.sendMedia(Buffer.concat(chunks),
             decodeURIComponent(req.headers['x-file-name'] || ''), req.headers['x-file-kind'] || 'auto',
             req.headers['x-request-id'], { accountId: req.headers['x-account-id'] });
-          return send(200, { ...bridge.snapshot(), delivery });
+          return send(200, { ...snapshot(), delivery });
         }
         let body = {};
-        if (['/api/verify', '/api/send', '/api/codex/config'].includes(url.pathname)) {
+        if (['/api/verify', '/api/send', '/api/codex/config', '/api/profiles', '/api/profile'].includes(url.pathname)) {
           const chunks = [];
           let length = 0;
           for await (const chunk of req) {
@@ -75,11 +85,13 @@ export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || 
           body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         } else req.resume();
         switch (url.pathname) {
+          case '/api/profiles': return send(201, profiles.snapshot(await profiles.create(body.name)));
+          case '/api/profile': profiles.rename(profile, body.name); break;
           case '/api/login': await bridge.login(); break;
           case '/api/verify': bridge.verify(body.code); break;
           case '/api/send': {
-            const delivery = await bridge.send(body.text, body.requestId);
-            return send(200, { ...bridge.snapshot(), delivery });
+            const delivery = await bridge.send(body.text, body.requestId, { accountId: body.accountId });
+            return send(200, { ...snapshot(), delivery });
           }
           case '/api/pause': bridge.pause(); break;
           case '/api/resume': bridge.resume(); break;
@@ -104,14 +116,15 @@ export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || 
           }
           default: return send(404, { error: '接口不存在' });
         }
-        return send(200, bridge.snapshot());
+        return send(200, snapshot());
       }
       if (req.method !== 'GET') return send(405, { error: '不支持的请求方法' });
-      if (url.pathname === '/api/state') return send(200, bridge.snapshot());
+      if (url.pathname === '/api/profiles') return send(200, { profiles: profiles.list() });
+      if (url.pathname === '/api/state') return send(200, snapshot());
       if (url.pathname === '/api/events') {
         res.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/event-stream',
           Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-        res.write(`event: snapshot\ndata: ${JSON.stringify(bridge.snapshot())}\n\n`);
+        res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot())}\n\n`);
         clients.add(res);
         req.on('close', () => clients.delete(res));
         return;
@@ -142,25 +155,28 @@ export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || 
       else res.end();
     }
   });
-  // Serialize commands; a slow login/clear must not overwrite a later action.
+  // Serialize only within a profile. One user's QR request cannot block another user.
   const handler = server.listeners('request')[0];
   server.removeAllListeners('request');
-  let commands = Promise.resolve();
   server.on('request', (req, res) => {
-    if (req.method === 'POST') commands = commands.then(() => handler(req, res)).catch(() => {});
+    if (closing) { res.writeHead(503); res.end(); return; }
+    let url;
+    try { url = new URL(req.url, 'http://localhost'); }
+    catch { res.writeHead(400); res.end(); return; }
+    const profile = profiles.items.get(url.pathname === '/api/profiles' || url.pathname === '/api/profile'
+      ? 'default' : url.searchParams.get('profile') ?? 'default');
+    if (req.method === 'POST' && profile) profile.commands = profile.commands.then(() => handler(req, res)).catch(() => {});
     else void handler(req, res);
   });
-  await bridge.init();
-  codex?.wake();
-  return { server, bridge, store, codex,
+  return { server, profiles, bridge: initial.bridge, store: initial.store, codex: initial.codex,
     async close() {
+      closing = true;
       clearInterval(heartbeat);
-      await commands;
-      await codex?.close();
-      await bridge.close();
-      for (const client of clients) client.end();
+      // Registry operations can create a profile, so settle those first.
+      await initial.commands;
+      await Promise.all([...profiles.items.values()].map(p => p.commands));
+      await profiles.close();
       await new Promise(resolveClose => server.close(resolveClose));
-      store.close();
     },
   };
 }
