@@ -39,4 +39,7 @@ Existing 22 tests; platform integration for authorization/activation races/recov
 - Browser registration/login, fourth-assistant swap, streaming interrupt, QR verification, history reload, admin read-only, password change, desktop/mobile passed without JavaScript errors.
 - Real Codex 0.163.0 + gpt-6.1-sol: persistent thread resumed the validation word after process restart; live generation interrupted, then continued in the same thread.
 - Inspected the Codex process filesystem (inside bubblewrap, not the outer supervisor): own workspace/home present; host Codex home, old service, platform and other users absent.
-- Deployment pending final live HTTP/QR checks; existing 3210 left untouched.
+- Deployed wxbot-platform.service on 127.0.0.1:3211; health check passed and original 3210 still returns HTTP 200.
+- Live browser -> real Codex response and real iLink QR creation passed. After systemd restart, the same assistant/thread correctly recalled its previous validation word. Verification assistant left stopped.
+- Actual mobile scan and end-to-end real WeChat delivery still require the user; mock channel/real adapter protocol flows are covered by tests.
+- Administrator bootstrap secret is in a mode-0600 file outside the repository; no secrets are committed or included in screenshots.
