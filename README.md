@@ -1,22 +1,38 @@
-# wxbot · ClawBot Local
+# wxbot · ClawBot Workspace
 
-在本机运行的微信 ClawBot 消息台。微信扫码连接后，发给 ClawBot 的消息实时显示在浏览器中。
+微信 ClawBot 消息台与多用户 AI 助手平台。支持微信扫码接入、网页聊天、持久 Codex 会话和实时输出，无需运行 OpenClaw。
 
-**微信 → iLink 消息接口 → Node.js 本地服务 → SSE → 浏览器**
+当前版本：[v1.0.1](https://github.com/wakaka-sam/wxbot/releases/tag/v1.0.1) · [更新记录](CHANGELOG.md) · [平台部署与适配器接口](docs/PLATFORM.md)
 
-基础消息收发无需 OpenClaw 或模型 API Key。开启 Codex 自动回复后，微信新消息会通过本机已登录的 Codex CLI 执行，并将最终回复发回微信。
+## 选择运行模式
+
+| 模式 | 启动命令 / 默认端口 | 适合场景 | 系统要求 |
+| --- | --- | --- | --- |
+| 注册登录版助手平台 | `npm run platform` / `3211` | 多用户登录、助手管理、网页与微信续聊、管理员查看历史 | Linux + bubblewrap + Codex |
+| 本机消息台 | `npm start` / `3210` | 单个部署者管理多个微信连接、收发附件、Codex 执行代码 | macOS / Linux / Windows；自动回复需 Codex |
+
+两个入口使用独立数据目录，可以同时运行；同一个微信 Bot 不应同时交给两个入口轮询。本机消息台的「用户」是连接配置，不等于助手平台的注册账号。
+
+基础微信消息收发无需模型 API Key；AI 功能使用部署方已登录的 Codex CLI 及其模型额度。
 
 ## 注册登录版助手平台
 
 新增独立平台入口：`npm run platform`，默认端口 **3211**。提供账号注册登录、每人最多 3 个激活助手、网页与微信共享 Codex 会话、实时输出、中断续聊、扫码问候/最近十条总结，以及管理员用户与历史视图。微信 Channel 与 AI Harness 分别封装，方便替换。
 
-首次启动需配置管理员密码与隔离执行器。完整配置、适配器契约和验证说明见 [平台部署文档](docs/PLATFORM.md)。此入口使用独立数据目录，原 3210 本机消息台继续保留；现有微信账号不会自动迁移。
+- 每个助手拥有独立持久会话；网页输入、微信输入、历史记录与实时输出在同一会话中汇合。
+- 新输入中断当前生成后继续；扫码新助手发送问候，有历史时额外总结最近十条正文消息。
+- 激活第四个助手时明确选择停止哪个，历史保留；管理员可只读查看所有用户的助手及对话。
+- 微信 Channel 与 Codex Harness 解耦，可分别接入其他聊天渠道或 AI 执行器。
 
-## 快速安装
+下载并安装依赖后，按 [平台部署文档](docs/PLATFORM.md#部署) 配置管理员密码、Codex 登录和 bubblewrap，再运行 `npm run platform`，访问 **http://127.0.0.1:3211**。首次启动必须配置 `PLATFORM_ADMIN_PASSWORD`，没有默认管理员密码。systemd 模板与环境变量示例在 [`deploy/`](deploy/)。
 
-当前版本：[v1.0.0](https://github.com/wakaka-sam/wxbot/releases/tag/v1.0.0) · [所有 Releases](https://github.com/wakaka-sam/wxbot/releases)。
+平台当前提供隔离的文字对话，不开放服务器命令执行、网页搜索或附件理解；独立容器/虚拟机 sandbox 调度尚未实现。原 3210 消息台继续保留原能力，已有连接和账号不会自动迁移至新平台。
 
-需要 [Node.js](https://nodejs.org/) **22.13+**（推荐 24，包含 npm）。Release 是跨平台源码包，无前端构建步骤；不包含 Node.js、Codex CLI 或 npm 依赖，首次安装需要网络。消息台可在 macOS / Linux / Windows 上运行；Codex 的平台要求以其[官方安装说明](https://github.com/openai/codex#installing-and-running-codex-cli)为准。
+## 本机消息台快速安装
+
+当前版本：[v1.0.1](https://github.com/wakaka-sam/wxbot/releases/tag/v1.0.1) · [所有 Releases](https://github.com/wakaka-sam/wxbot/releases)。
+
+需要 [Node.js](https://nodejs.org/) **22.13+**（推荐 24，包含 npm）。Release 同时包含两个入口的源码，无前端构建步骤；不包含 Node.js、Codex CLI、bubblewrap 或 npm 依赖，首次安装需要网络。以下步骤启动 3210 本机消息台，可在 macOS / Linux / Windows 上运行；3211 助手平台需要 Linux。Codex 的平台要求以其[官方安装说明](https://github.com/openai/codex#installing-and-running-codex-cli)为准。
 
 ### 1. 安装并登录 Codex（需要自动回复时）
 
@@ -33,9 +49,9 @@ codex login status
 macOS / Linux（在准备存放项目的目录运行）：
 
 ```bash
-curl -fL https://github.com/wakaka-sam/wxbot/releases/download/v1.0.0/wxbot-v1.0.0.tar.gz -o wxbot-v1.0.0.tar.gz
-tar -xzf wxbot-v1.0.0.tar.gz
-cd wxbot-v1.0.0
+curl -fL https://github.com/wakaka-sam/wxbot/releases/download/v1.0.1/wxbot-v1.0.1.tar.gz -o wxbot-v1.0.1.tar.gz
+tar -xzf wxbot-v1.0.1.tar.gz
+cd wxbot-v1.0.1
 npm ci --omit=dev
 npm start
 ```
@@ -43,9 +59,9 @@ npm start
 Windows PowerShell：
 
 ```powershell
-Invoke-WebRequest https://github.com/wakaka-sam/wxbot/releases/download/v1.0.0/wxbot-v1.0.0.zip -OutFile wxbot-v1.0.0.zip
-Expand-Archive .\wxbot-v1.0.0.zip -DestinationPath .
-Set-Location .\wxbot-v1.0.0
+Invoke-WebRequest https://github.com/wakaka-sam/wxbot/releases/download/v1.0.1/wxbot-v1.0.1.zip -OutFile wxbot-v1.0.1.zip
+Expand-Archive .\wxbot-v1.0.1.zip -DestinationPath .
+Set-Location .\wxbot-v1.0.1
 npm ci --omit=dev
 npm start
 ```
@@ -53,7 +69,7 @@ npm start
 也可以从 GitHub 克隆（需要 Git）：
 
 ```bash
-git clone --branch v1.0.0 --depth 1 https://github.com/wakaka-sam/wxbot.git
+git clone --branch v1.0.1 --depth 1 https://github.com/wakaka-sam/wxbot.git
 cd wxbot
 npm ci --omit=dev
 npm start
@@ -84,7 +100,7 @@ npm start
 
 页面沿用现有本机访问限制。远程使用时先通过 SSH 转发服务端口，再在自己的浏览器打开上述地址。列表只返回账号状态和消息数量，不返回消息正文或登录凭证；消息内容在各账号收件箱中查看。
 
-## 多用户（本地部署扩展）
+## 多连接配置（3210 本机消息台）
 
 消息台支持最多 50 个用户同时连接微信。左侧选择「新增用户」，填写便于识别的名称，再为该用户生成二维码，由对应的微信账号扫码。可以切换用户和重命名；切换页面不会暂停其他用户收发。
 
@@ -114,9 +130,11 @@ HTTP 接口仍需本机 Host/Origin 校验，POST 仍需 `X-Clawbot-Local: 1`。
 
 ## 校验与升级
 
-每个 Release 附带 `SHA256SUMS.txt`。下载后可计算压缩包 SHA-256，与该文件中的同名条目比较：macOS 使用 `shasum -a 256 wxbot-v1.0.0.tar.gz`，Linux 使用 `sha256sum wxbot-v1.0.0.tar.gz`，Windows 使用 `Get-FileHash .\wxbot-v1.0.0.zip -Algorithm SHA256`。
+每个 Release 附带 `SHA256SUMS.txt`。下载后可计算压缩包 SHA-256，与该文件中的同名条目比较：macOS 使用 `shasum -a 256 wxbot-v1.0.1.tar.gz`，Linux 使用 `sha256sum wxbot-v1.0.1.tar.gz`，Windows 使用 `Get-FileHash .\wxbot-v1.0.1.zip -Algorithm SHA256`。
 
 默认消息、登录态和会话设置保存在安装目录的 `data/`。升级前用 `Ctrl+C` 停止旧实例，并备份该目录；解压新版本到新目录，将旧 `data/` 复制进去，再运行 `npm ci --omit=dev`、`npm start`。不要同时启动新旧实例。也可以从首次安装起通过 `CLAWBOT_DATA_DIR` 指向安装目录之外的固定路径，升级时继续使用同一路径。Codex 历史还依赖本机 Codex 自身的数据目录；跨机器迁移仅复制 `data/` 不能保证续聊。
+
+平台升级还需停止 `wxbot-platform`，备份完整 `PLATFORM_DATA_DIR`（包含数据库、微信凭证和各助手的 Codex 会话文件），在新目录安装依赖并更新 systemd 的项目路径后再启动。保留原环境配置和数据目录，不能仅复制 SQLite 或 thread ID。`v1.0.0` 本机消息台升级后，原账号与记录保留为默认连接；不会自动变成注册用户。
 
 ## 发布构建
 
@@ -126,12 +144,13 @@ HTTP 接口仍需本机 Host/Origin 校验，POST 仍需 `X-Clawbot-Local: 1`。
 npm ci
 npm run check
 npm test
+npm run test:platform
 npm run release:pack -- HEAD
 ```
 
 `dist/` 生成 `wxbot-v<版本>.tar.gz`、`wxbot-v<版本>.zip` 和 `SHA256SUMS.txt`。脚本从指定 Git 提交读取版本并按文件清单归档，不复制工作目录的登录态、附件、聊天记录、截图、依赖或环境配置。用户安装 Release 不需要 Git。
 
-## 功能与边界
+## 本机消息台功能与边界
 
 - 完整扫码状态：获取、等待扫码、手机确认、配对码、节点跳转、过期重试。
 - 文字保留换行，按纯文本展示；语音有微信转写结果时显示转写。
@@ -145,7 +164,7 @@ npm run release:pack -- HEAD
 - 清空时删除本地记录和附件，但保留去重回执，防止上游重放让已清空消息重新出现。
 - 仅接收当前扫码绑定用户的完整入站消息；过滤机器人回复。主要面向个人 ClawBot 会话。
 
-## ClawBot → Codex 持续会话
+## 本机消息台：ClawBot → Codex 持续会话
 
 先确认本机 `codex --version` 可用，且 `codex login status` 显示已登录；未登录时先运行 `codex login`。沿用本机 Codex 的登录与默认模型，不需要在网页粘贴凭证。
 
@@ -240,7 +259,8 @@ npm start
 ```bash
 npm run dev     # 后端改动自动重启，前端改动刷新页面即可
 npm run check   # 语法检查
-npm test        # 使用临时目录与模拟微信接口，不访问个人微信
+npm test        # 本机消息台回归测试
+npm run test:platform  # 平台权限、激活配额、会话、中断及微信适配器测试
 ```
 
 新增测试验证图片/视频/文件上传、AES 密文与 MD5、大小及类型校验、重复请求、上传失败与发送结果未知、typing 续期/取消/失败降级、Codex 附件回传与重复恢复、越界及凭证目录保护。
@@ -261,6 +281,11 @@ src/media.js      附件下载、大小限制、AES 解密、Codex 产物暂存
 public/          原生 HTML / CSS / JavaScript 界面，无构建步骤
 src/codex-client.js  Codex 子进程、JSON-RPC、轮次事件与取消
 src/codex-manager.js 会话绑定、持久化队列、微信控制指令与回复回传
+src/platform/    账号、权限、助手调度、持久任务和 HTTP/SSE API
+src/platform/adapters/  微信 Channel 与 Codex Harness
+public/platform/ 注册、登录、聊天、扫码和管理员页面
+deploy/          systemd 单元与不含真实凭证的环境变量模板
+docs/PLATFORM.md 平台部署、运行边界及扩展接口
 test/            Node.js 内置测试框架的集成测试
 ```
 

@@ -1,9 +1,9 @@
 {
   "name": "clawbot-local",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
-  "description": "微信 ClawBot 本地消息台与 Codex CLI 持续会话桥接",
+  "description": "微信 ClawBot 消息台与支持注册登录的多用户 Codex 助手平台",
   "engines": {
     "node": ">=22.13.0"
   },
