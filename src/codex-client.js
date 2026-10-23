@@ -81,6 +81,8 @@ export class CodexClient extends EventEmitter {
       if (p.item?.type === 'agentMessage') active.items.set(p.item.id, { text: p.item.text || '', phase: p.item.phase });
       if (p.item?.type === 'commandExecution') active.onProgress?.({ activity: `执行命令：${p.item.command || ''}`.slice(0, 1000) });
       if (p.item?.type === 'fileChange') active.onProgress?.({ activity: '正在修改工作目录中的文件…' });
+      const activity={commandExecution:'正在执行命令…',fileChange:'正在修改工作文件…',webSearch:'正在查询网页…',subAgentActivity:'正在与子代理协作…',mcpToolCall:'正在调用工具…'}[p.item?.type];
+      if(activity)active.onEvent?.({type:'activity',itemId:p.item.id,text:activity});
     }
     if (message.method === 'item/completed' && p.item?.type === 'agentMessage') {
       active.items.set(p.item.id, { text: p.item.text || '', phase: p.item.phase });

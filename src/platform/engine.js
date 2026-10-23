@@ -111,7 +111,7 @@ export class Engine extends EventEmitter {
       const jobs=this.store.pending(id);if(!jobs.length)break;
       const selected=jobs[0].kind==='summary'?[jobs[0]]:jobs.filter(j=>j.kind==='chat').slice(0,20);
       const job=selected[0];for(const j of selected)this.store.jobState(j.id,'running');
-      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id};this.publish(id,'assistant',this.snapshot(id));
+      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id,activities:new Set()};this.publish(id,'assistant',this.snapshot(id));
       const paragraph=(item,complete=false)=>{
         while(item.text.length>item.sent){
           const remainder=item.text.slice(item.sent);let length=0;
@@ -135,6 +135,11 @@ export class Engine extends EventEmitter {
         const task=r.harness.run({text:prompt,images:prepared.images,onEvent:event=>{
           if(r.active!==run)return;
           if(event.type==='started'){if(run.interrupted)void r.harness.interrupt().catch(()=>{});return;}
+          if(event.type==='activity'){
+            if(run.activities.has(event.itemId))return;run.activities.add(event.itemId);
+            const m=this.store.addMessage(id,{role:'assistant',kind:'progress',text:event.text,source:'harness',jobId:job.id});
+            this.publish(id,'message',m);this.enqueueText(id,m.text,`activity:${m.id}`);return;
+          }
           if(!['delta','message'].includes(event.type))return;
           let item=run.items.get(event.itemId);
           if(!item){const kind=job.kind==='summary'?'summary':event.phase==='commentary'?'progress':'chat';const m=this.store.addMessage(id,{role:'assistant',kind,state:'streaming',source:'harness',jobId:job.id});item={id:m.id,text:'',sent:0};run.items.set(event.itemId,item);}

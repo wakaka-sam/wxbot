@@ -17,25 +17,31 @@
 
 ## 当前运行边界
 
-平台支持文字、ClawBot 图片和文档输入。微信图片作为真正的 `localImage` 输入复制到该助手的隔离 workspace，UTF-8 文本、PDF、DOCX、XLSX 附件经过独立提取模块再传给模型。网页历史可预览图片和下载附件；网页上传尚未开放。默认 Codex 禁用服务器命令、文件修改、插件、外部工具和网页搜索。所有用户使用部署方的 Codex 授权与额度。
+平台支持文字、ClawBot 图片和文档输入。微信图片作为真正的 `localImage` 输入复制到该助手的隔离 workspace，UTF-8 文本、PDF、DOCX、XLSX 附件经过独立提取模块再传给模型。网页历史可预览图片和下载附件；网页上传尚未开放。Codex 已开放实时网页搜索、链接读取、命令与代码执行、助手工作目录文件修改、Playwright/Chromium 浏览器自动化、本地技能和子代理。外部账号应用、远程插件与自动安装 MCP 依赖仍需独立集成和按用户授权，不能复用部署账号的私人应用连接。所有用户使用部署方的 Codex 授权与额度。
 
 每个附件最多 20 MB，每条消息最多 10 个附件；每轮图片最多 10 张且总计 20 MB，文档文字总计最多 60000 字符。PDF 读取前 40 页文字，不包含扫描图 OCR；DOCX 读取正文/表格文字；XLSX 读取前 5 个表、每表 200 行、每行 50 格，公式只用缓存值。不执行宏或文件。视频、SILK 音频、旧版 DOC/XLS 和压缩包等暂不解析，仍保存供下载；失败、截断和提取范围均作为系统消息回传微信及网页。可改发图片或支持的格式。
 
 附件元数据随用户消息和模型任务原子保存，重启补齐时不重复推理。升级自动为消息表增加附件列，已有微信历史补齐元数据但不重跑旧对话。附件下载检查助手所有权，管理员只读访问留审计；其他用户、未登录请求、目录穿越和符号链接均拒绝。
 
-每个助手有独立 CODEX_HOME、workspace 和数据库身份权限；Linux bubblewrap 文件系统/PID 命名空间不挂载宿主 `/root`、其他助手或平台数据库。执行器环境不继承宿主 secrets。缺少隔离工具时失败，不自动退化为裸进程。Codex 进程仍需要自己的授权文件访问模型服务，不能将此隔离当作允许用户任意服务器代码执行的容器平台。未来开放工具执行应另配专用容器、网络策略和凭证代理。
+每个助手有独立 CODEX_HOME、workspace 和数据库身份权限；Linux bubblewrap 文件系统/PID 命名空间不挂载宿主 `/root`、其他助手或平台数据库。执行器环境不继承宿主 secrets。缺少隔离工具时失败，不自动退化为裸进程。Codex 进程使用部署授权访问模型服务，但工具执行由 CLI 内层权限 profile 限制：禁止读取 `.codex` 中的凭据和会话文件，只开放必要的技能文件；代码和依赖写入 `/workspace` 或助手缓存目录。公网命令通过 Codex 网络代理，阻断私网、环回、云元数据和直接套接字绕过；托管搜索走单独服务连接。项目 `.codex` 配置不受信任，不能覆盖平台 profile；hooks、外部 MCP 和应用不自动继承宿主设置。
+
+每个执行器还运行于独立 systemd scope，限制 768 MiB 内存、256 MiB swap、1 核 CPU 配额及 192 个任务；同一会话最多同时运行 2 个子代理。关闭助手会回收整个 scope。保留外层 bubblewrap 文件系统/PID/用户命名空间，工具在隔离身份 UID 1000 下执行。允许安装工作目录级 npm 依赖等，但不开放 sudo、宿主服务管理或其他用户目录。
 
 ## 部署
 
 先下载并解压 [v1.0.1 源码包](https://github.com/wakaka-sam/wxbot/releases/tag/v1.0.1)，进入 `wxbot-v1.0.1/`。下列 systemd 示例使用 root 部署路径；安装到其他目录时，必须同时修改单元文件中的 `WorkingDirectory`、`ExecStart` 以及 env 文件中的路径。
 
-需要 Linux、Node.js ≥22.13、bubblewrap、Python 3、poppler-utils（`pdftotext`）以及已登录 Codex。当前实际验证版本是 Codex CLI 0.163.0；安装到独立目录，不覆盖现有 CLI：
+需要 Linux、systemd/cgroup v2、可嵌套 user namespace 的 bubblewrap、Node.js ≥22.13、Python 3、poppler-utils（`pdftotext`）以及已登录 Codex。当前实际验证版本是 Codex CLI 0.163.0；安装到独立目录，不覆盖现有 CLI：
 
 ```bash
 npm ci --omit=dev
 # Debian/Ubuntu 文档提取依赖：apt-get install -y python3 poppler-utils
 npm install --prefix /root/.local/share/wxbot-platform-tools @openai/codex@0.163.0
 # 根据系统安装 bubblewrap，设置 PLATFORM_BWRAP 指向 bwrap 可执行文件。
+# PLATFORM_SYSTEMD_RUN 默认 /usr/bin/systemd-run；服务需要创建系统 scope 的权限。
+# 浏览器运行时使用独立只读工具目录：
+npm install --prefix /opt/wxbot-agent-tools playwright
+PLAYWRIGHT_BROWSERS_PATH=/opt/wxbot-agent-tools/browsers /opt/wxbot-agent-tools/node_modules/.bin/playwright install chromium
 # 使用部署方既有 Codex 登录，PLATFORM_CODEX_AUTH 指向 auth.json。
 cp deploy/platform.env.example /etc/wxbot-platform.env
 chmod 600 /etc/wxbot-platform.env
@@ -95,6 +101,12 @@ Harness 接受 `{dir}`，实现：
 - 事件 `started:{turnId}`、`delta:{itemId,delta,phase}`、`message:{itemId,text,phase}`；phase 区分 `commentary` 与 `final_answer`，不发布内部 reasoning。
 
 接新聊天机器人只需实现 Channel；换 AI harness 只需实现 Harness。两者通过 Engine 的标准事件连接，不应互相调用。协议依据 [Codex app-server 官方文档](https://learn.chatgpt.com/docs/app-server)，具体可用字段以固定版本 CLI schema 为准。
+
+## 实际能力验收
+
+在 sg 上可执行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-agent.mjs`。这是显式调用真实模型的验收：只使用临时合成数据，验证写入/执行、公网读取、私网和凭据阻断、项目配置不能提权、浏览器、搜索、子代理、scope 配额和重启后工作文件保留；结束删除临时数据。
+
+权限配置以 [Codex 官方权限文档](https://learn.chatgpt.com/docs/permissions) 和固定 CLI 实测为准。`default_permissions` 不与旧 `sandbox_mode` 混用，thread/turn 不再强制覆盖成 read-only。既有会话通过原 thread ID 恢复，无需重新创建助手。
 
 ## 验证
 
