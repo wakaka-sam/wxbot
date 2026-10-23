@@ -71,13 +71,14 @@ export class PlatformStore {
     const ts=now();this.db.prepare('INSERT INTO messages(id,assistant_id,role,kind,text,state,source,source_key,job_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,a,role,kind,text,state,source,sourceKey,jobId,ts,ts);return this.message(id);
   }
   updateMessage(id,text,state='streaming'){this.db.prepare('UPDATE messages SET text=?,state=?,updated_at=? WHERE id=?').run(text,state,now(),id);return this.message(id);}
-  submit(id,text,source,key,kind='chat'){
+  submit(id,text,source,key,kind='chat',{messageId,outbound=[]}={}){
     return this.tx(()=>{
       const prior=key&&this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND source_key=?').get(id,key); if(prior)return {message:prior,duplicate:true};
       if(this.pending(id).length>=100)throw new AppError(429,'等待中的消息过多，请稍后发送');
       const jobId=randomUUID();
-      const message=kind==='chat'?this.addMessage(id,{role:'user',text,source,sourceKey:key,jobId}):null;
+      const message=kind==='chat'?this.addMessage(id,{id:messageId,role:'user',text,source,sourceKey:key,jobId}):null;
       this.db.prepare('INSERT INTO jobs(id,assistant_id,message_id,prompt,kind,state,created_at) VALUES(?,?,?,?,?,?,?)').run(jobId,id,message?.id||null,text,kind,'pending',now());
+      for(const delivery of outbound)this.queueDelivery(delivery.id,id,delivery.payload);
       return {message,jobId,duplicate:false};
     });
   }
