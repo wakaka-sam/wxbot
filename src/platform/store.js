@@ -67,7 +67,7 @@ export class PlatformStore {
   rename(id,user,name){this.owned(id,user); if(typeof name!=='string'||!name.trim()||name.trim().length>60)throw new AppError(400,'名称须为 1–60 个字符');this.db.prepare('UPDATE assistants SET name=?,updated_at=? WHERE id=?').run(name.trim(),now(),id);}
   thread(id,threadId){this.db.prepare('UPDATE assistants SET thread_id=?,updated_at=? WHERE id=?').run(threadId,now(),id);}
   messages(id,{before=Number.MAX_SAFE_INTEGER,limit=100}={}){return this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND seq<? ORDER BY seq DESC LIMIT ?').all(id,before,limit).reverse().map(decodeMessage);}
-  recent(id,limit=10){return this.db.prepare("SELECT * FROM messages WHERE assistant_id=? AND kind='chat' AND role IN ('user','assistant') AND text<>'' ORDER BY seq DESC LIMIT ?").all(id,limit).reverse().map(decodeMessage);}
+  recent(id,limit=10){return this.db.prepare("SELECT * FROM messages WHERE assistant_id=? AND kind='chat' AND role IN ('user','assistant') AND (text<>'' OR attachments<>'[]') ORDER BY seq DESC LIMIT ?").all(id,limit).reverse().map(decodeMessage);}
   message(id){return decodeMessage(this.db.prepare('SELECT * FROM messages WHERE id=?').get(id));}
   attachment(assistantId,id){const row=this.db.prepare("SELECT j.value FROM messages m,json_each(m.attachments) j WHERE m.assistant_id=? AND json_extract(j.value,'$.id')=? LIMIT 1").get(assistantId,id);return row?JSON.parse(row.value):null;}
   addMessage(a,{id=randomUUID(),role,kind='chat',text='',state='complete',source='system',sourceKey=null,jobId=null,attachments=[]}){
@@ -79,6 +79,10 @@ export class PlatformStore {
       const prior=key&&this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND source_key=?').get(id,key); if(prior){
         // Backfill metadata for previously ingested WeChat history, without rerunning the model.
         if(attachments.length&&!decodeMessage(prior).attachments.length)this.db.prepare('UPDATE messages SET attachments=? WHERE id=?').run(JSON.stringify(attachments),prior.id);
+        if(source==='wechat'&&attachments.length&&text===''&&prior.text==='请查看我发送的附件。'){
+          this.db.prepare("UPDATE messages SET text='' WHERE id=?").run(prior.id);
+          this.db.prepare("UPDATE jobs SET prompt='' WHERE message_id=? AND state='pending'").run(prior.id);
+        }
         return {message:this.message(prior.id),duplicate:true};
       }
       if(this.pending(id).length>=100)throw new AppError(429,'等待中的消息过多，请稍后发送');

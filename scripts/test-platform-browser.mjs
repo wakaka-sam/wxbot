@@ -21,8 +21,8 @@ await page.fill('#chat-input','网页消息也同步到微信');await page.click
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aTfoAAAAASUVORK5CYII=','base64');
 const image=await saveMedia(png,describeMedia(png,'微信图片.png'),r.options.dir),bytes=Buffer.from('BROWSER-ATTACHMENT-CONTENT');
 const doc=await saveMedia(bytes,describeMedia(bytes,'微信资料.txt'),r.options.dir);
-r.input('请查看微信附件','browser-attachments',[image,doc]);
-await page.locator('.attachment-preview').waitFor();await page.waitForFunction(()=>document.querySelector('.attachment-preview').naturalWidth>0);
+r.input('','browser-attachments',[image,doc]);
+await page.locator('.attachment-preview').waitFor();assert.equal(await page.locator('.message.user').filter({has:page.locator('.attachment-preview')}).locator('.message-body').count(),0);await page.waitForFunction(()=>document.querySelector('.attachment-preview').naturalWidth>0);
 await page.waitForFunction(()=>[...document.querySelectorAll('.message.assistant.chat')].some(e=>e.textContent.includes('BROWSER-ATTACHMENT-CONTENT')));
 const downloaded=await page.evaluate(async()=>await(await fetch([...document.querySelectorAll('.message-attachment a')].find(a=>a.textContent.includes('微信资料.txt')).href)).text());assert.equal(downloaded,'BROWSER-ATTACHMENT-CONTENT');
 await page.screenshot({path:join(artifacts,'workspace.png')});

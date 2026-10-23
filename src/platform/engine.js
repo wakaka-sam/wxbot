@@ -53,9 +53,9 @@ export class Engine extends EventEmitter {
   }
   reconcile(id,r){for(const m of r.channel.history())this.submit(id,m.text,'wechat',m.id,m.attachments);}
   submit(id,text,source='web',key=randomUUID(),attachments=[]){
-    this.requireActive(id);if(typeof text!=='string'||!text.trim()||text.length>20000)throw new AppError(400,'消息须为 1–20000 个字符');
+    this.requireActive(id);attachments=source==='wechat'?normalizeAttachments(attachments):[];
+    if(typeof text!=='string'||(!text.trim()&&!attachments.length)||text.length>20000)throw new AppError(400,'消息须为 1–20000 个字符');
     if(typeof key!=='string'||key.length>500)throw new AppError(400,'请求标识无效');
-    attachments=source==='wechat'?normalizeAttachments(attachments):[];
     const messageId=randomUUID();
     const outbound=source==='web'?this.textDeliveries(id,text.trim(),`user:${messageId}`,'[User]: '):[];
     // Commit the input, model job and channel mirror together; retries cannot lose or duplicate the mirror.

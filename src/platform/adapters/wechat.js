@@ -4,7 +4,7 @@ import { Bridge } from '../../bridge.js';
 import { Weixin } from '../../weixin.js';
 import { normalizeAttachments, readChannelAttachment } from '../attachments.js';
 
-const inputMessage=m=>({id:m.id,text:m.text||((m.attachments||[]).length?'请查看我发送的附件。':'[空消息]'),attachments:normalizeAttachments(m.attachments)});
+const inputMessage=m=>({id:m.id,text:m.text||((m.attachments||[]).length?'':'[空消息]'),attachments:normalizeAttachments(m.attachments)});
 
 // Channel contract: start/stop/login/verify/disconnect/send/snapshot/history/close.
 // Events: input {id,text}, paired, state. No harness or platform users here.

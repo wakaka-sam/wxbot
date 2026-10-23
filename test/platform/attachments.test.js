@@ -71,13 +71,14 @@ test('附件随任务落库，重启恢复且不重复；所有者/admin 下载�
   let channel=f.app.engine.runtimes.get(id).channel;
   const image=await saved(channel.options.dir,PNG,'测试.png'),doc=await saved(channel.options.dir,Buffer.from('ATTACHMENT-CONTENT-493'),'notes.txt');
   const originalWake=f.app.engine.wake;f.app.engine.wake=()=>{};
-  channel.emit('input',{id:'attachment-message',text:'请分析',attachments:[image,doc]});
-  assert.equal(f.app.store.messages(id)[0].attachments.length,2);
+  channel.emit('input',{id:'attachment-message',text:'',attachments:[image,doc]});
+  assert.equal(f.app.store.messages(id)[0].attachments.length,2);assert.equal(f.app.store.messages(id)[0].text,'');assert.equal(f.app.store.recent(id).length,1);
+  assert.equal((await alice.request(`/api/assistants/${id}/messages`,{text:'',requestId:randomUUID(),attachments:[image]})).status,400);
   f.app.engine.wake=originalWake;
   await f.restart();channel=f.app.engine.runtimes.get(id).channel;channel.readAttachment=a=>readChannelAttachment(channel.options.dir,a.id);
   await until(()=>f.fake.runs.length===1&&!f.app.engine.runtimes.get(id).active);
   assert.match(f.fake.runs[0].text,/ATTACHMENT-CONTENT-493/);assert.deepEqual(f.fake.runs[0].images[0].bytes,PNG);
-  channel.emit('input',{id:'attachment-message',text:'请分析',attachments:[image,doc]});assert.equal(f.app.store.messages(id).filter(m=>m.role==='user').length,1);
+  channel.emit('input',{id:'attachment-message',text:'',attachments:[image,doc]});assert.equal(f.app.store.messages(id).filter(m=>m.role==='user').length,1);
   const path=`/api/assistants/${id}/attachments/${image.id}`;
   const request=c=>fetch(f.base+path,{headers:{cookie:c?.cookie||''}});
   const owner=await request(alice);assert.equal(owner.status,200);assert.equal(owner.headers.get('content-type'),'image/png');assert.deepEqual(Buffer.from(await owner.arrayBuffer()),PNG);
@@ -137,5 +138,11 @@ test('旧数据库无损新增附件字段，历史文字及已存在附件保�
   const attachment={id:randomUUID(),name:'old.txt'};
   const backfill=store.submit(a.id,'请查看附件','wechat','wechat:legacy','chat',{attachments:[attachment]});
   assert.equal(backfill.duplicate,true);assert.equal(backfill.message.id,old.message.id);assert.deepEqual(backfill.message.attachments,[attachment]);assert.equal(store.pending(a.id).length,1);
+  const placeholder=store.submit(a.id,'请查看我发送的附件。','wechat','wechat:old-placeholder','chat',{attachments:[attachment]});
+  assert.equal(store.submit(a.id,'','wechat','wechat:old-placeholder','chat',{attachments:[attachment]}).message.text,'');
+  assert.equal(store.message(placeholder.message.id).text,'');
+  const genuine=store.submit(a.id,'请查看我发送的附件。','wechat','wechat:genuine','chat',{attachments:[attachment]});
+  store.submit(a.id,'请查看我发送的附件。','wechat','wechat:genuine','chat',{attachments:[attachment]});
+  assert.equal(store.message(genuine.message.id).text,'请查看我发送的附件。');
  }finally{store?.close();await rm(dir,{recursive:true,force:true});}
 });
