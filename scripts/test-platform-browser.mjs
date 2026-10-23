@@ -8,6 +8,8 @@ await mkdir(artifacts,{recursive:true});
 const f=await fixture(),browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE,args:['--no-sandbox']});
 const page=await browser.newPage({viewport:{width:1440,height:960}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
 try{
+// Exercise message submission without the secure-context-only randomUUID API.
+await page.addInitScript(()=>Object.defineProperty(crypto,'randomUUID',{value:undefined}));
 await page.goto(f.base);await page.locator('#auth-view').waitFor({state:'visible'});await page.screenshot({path:join(artifacts,'login.png')});
 await page.click('#register-tab');await page.fill('#username','browseruser');await page.fill('#password','Browser-test-731');await page.click('#auth-submit');await page.locator('#app-view').waitFor({state:'visible'});
 for(let i=1;i<=4;i++){await page.click('#create-open');await page.fill('#assistant-name',`助手 ${i}`);await page.click('#name-form button[type=submit]');await page.waitForFunction(i=>document.querySelector('#chat-title').textContent===`助手 ${i}`,i);if(i<4)await page.waitForFunction(()=>document.querySelector('#assistant-toggle').textContent==='停止助手');}
