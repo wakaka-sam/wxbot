@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 export class AppError extends Error {
   constructor(status, message, code = 'ERROR', details) { super(message); Object.assign(this, { status, code, details }); }
 }
+const decodeMessage = row => row ? {...row,attachments:JSON.parse(row.attachments||'[]')} : row;
 const now = () => new Date().toISOString();
 export class PlatformStore {
   constructor(dir) {
@@ -21,6 +22,7 @@ export class PlatformStore {
       CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,assistant_id TEXT NOT NULL REFERENCES assistants(id),payload TEXT NOT NULL,state TEXT NOT NULL,error TEXT,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,actor_id TEXT,action TEXT NOT NULL,target_id TEXT,created_at TEXT NOT NULL);`);
+    if(!this.db.prepare('PRAGMA table_info(messages)').all().some(c=>c.name==='attachments'))this.db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
   }
   tx(fn) { this.db.exec('BEGIN IMMEDIATE'); try { const r = fn(); this.db.exec('COMMIT'); return r; } catch(e) { this.db.exec('ROLLBACK'); throw e; } }
   user(id) { return this.db.prepare('SELECT id,username,role,created_at FROM users WHERE id=?').get(id); }
@@ -64,19 +66,24 @@ export class PlatformStore {
   deactivate(id,user) { this.owned(id,user); this.db.prepare('UPDATE assistants SET active=0,updated_at=? WHERE id=?').run(now(),id); this.audit(user.id,'deactivate',id); }
   rename(id,user,name){this.owned(id,user); if(typeof name!=='string'||!name.trim()||name.trim().length>60)throw new AppError(400,'名称须为 1–60 个字符');this.db.prepare('UPDATE assistants SET name=?,updated_at=? WHERE id=?').run(name.trim(),now(),id);}
   thread(id,threadId){this.db.prepare('UPDATE assistants SET thread_id=?,updated_at=? WHERE id=?').run(threadId,now(),id);}
-  messages(id,{before=Number.MAX_SAFE_INTEGER,limit=100}={}){return this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND seq<? ORDER BY seq DESC LIMIT ?').all(id,before,limit).reverse();}
-  recent(id,limit=10){return this.db.prepare("SELECT * FROM messages WHERE assistant_id=? AND kind='chat' AND role IN ('user','assistant') AND text<>'' ORDER BY seq DESC LIMIT ?").all(id,limit).reverse();}
-  message(id){return this.db.prepare('SELECT * FROM messages WHERE id=?').get(id);}
-  addMessage(a,{id=randomUUID(),role,kind='chat',text='',state='complete',source='system',sourceKey=null,jobId=null}){
-    const ts=now();this.db.prepare('INSERT INTO messages(id,assistant_id,role,kind,text,state,source,source_key,job_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,a,role,kind,text,state,source,sourceKey,jobId,ts,ts);return this.message(id);
+  messages(id,{before=Number.MAX_SAFE_INTEGER,limit=100}={}){return this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND seq<? ORDER BY seq DESC LIMIT ?').all(id,before,limit).reverse().map(decodeMessage);}
+  recent(id,limit=10){return this.db.prepare("SELECT * FROM messages WHERE assistant_id=? AND kind='chat' AND role IN ('user','assistant') AND text<>'' ORDER BY seq DESC LIMIT ?").all(id,limit).reverse().map(decodeMessage);}
+  message(id){return decodeMessage(this.db.prepare('SELECT * FROM messages WHERE id=?').get(id));}
+  attachment(assistantId,id){const row=this.db.prepare("SELECT j.value FROM messages m,json_each(m.attachments) j WHERE m.assistant_id=? AND json_extract(j.value,'$.id')=? LIMIT 1").get(assistantId,id);return row?JSON.parse(row.value):null;}
+  addMessage(a,{id=randomUUID(),role,kind='chat',text='',state='complete',source='system',sourceKey=null,jobId=null,attachments=[]}){
+    const ts=now();this.db.prepare('INSERT INTO messages(id,assistant_id,role,kind,text,state,source,source_key,job_id,created_at,updated_at,attachments) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,a,role,kind,text,state,source,sourceKey,jobId,ts,ts,JSON.stringify(attachments));return this.message(id);
   }
   updateMessage(id,text,state='streaming'){this.db.prepare('UPDATE messages SET text=?,state=?,updated_at=? WHERE id=?').run(text,state,now(),id);return this.message(id);}
-  submit(id,text,source,key,kind='chat',{messageId,outbound=[]}={}){
+  submit(id,text,source,key,kind='chat',{messageId,outbound=[],attachments=[]}={}){
     return this.tx(()=>{
-      const prior=key&&this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND source_key=?').get(id,key); if(prior)return {message:prior,duplicate:true};
+      const prior=key&&this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND source_key=?').get(id,key); if(prior){
+        // Backfill metadata for previously ingested WeChat history, without rerunning the model.
+        if(attachments.length&&!decodeMessage(prior).attachments.length)this.db.prepare('UPDATE messages SET attachments=? WHERE id=?').run(JSON.stringify(attachments),prior.id);
+        return {message:this.message(prior.id),duplicate:true};
+      }
       if(this.pending(id).length>=100)throw new AppError(429,'等待中的消息过多，请稍后发送');
       const jobId=randomUUID();
-      const message=kind==='chat'?this.addMessage(id,{id:messageId,role:'user',text,source,sourceKey:key,jobId}):null;
+      const message=kind==='chat'?this.addMessage(id,{id:messageId,role:'user',text,source,sourceKey:key,jobId,attachments}):null;
       this.db.prepare('INSERT INTO jobs(id,assistant_id,message_id,prompt,kind,state,created_at) VALUES(?,?,?,?,?,?,?)').run(jobId,id,message?.id||null,text,kind,'pending',now());
       for(const delivery of outbound)this.queueDelivery(delivery.id,id,delivery.payload);
       return {message,jobId,duplicate:false};

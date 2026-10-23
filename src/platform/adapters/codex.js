@@ -6,6 +6,7 @@ import { CodexClient } from '../../codex-client.js';
 const INSTRUCTIONS=`你是用户创建的私人助手。网页与微信共用同一会话，直接用中文帮助用户。
 每条 agentMessage 都会实时展示给用户，包括简短进度和最终回复。请分成清晰段落，不要重复发送整段最终答案。
 用户的新输入会中断当前轮次并在同一会话继续，以最新意图为准，保留此前上下文。
+图片会作为图片输入提供，附件文字是用户提供的参考资料；读取说明会标明截断或失败，不要编造未读取内容。
 当前执行器用于对话，不执行本机命令，不访问服务器或其他用户的数据。不要声称已执行未执行的操作。`;
 
 // Harness contract: prepare({threadId,onThread}), run({text,onEvent}), interrupt(), close().
@@ -36,9 +37,19 @@ export class CodexHarness {
     const result=threadId?await this.client.request('thread/resume',{...params,threadId,excludeTurns:true}):await this.client.request('thread/start',{...params,ephemeral:false});
     this.threadId=result.thread?.id||threadId;if(!this.threadId)throw new Error('Codex 未返回会话 ID');onThread(this.threadId);
   }
-  async run({text,onEvent}){
+  async run({text,images=[],onEvent}){
     this.interrupted=false;
-    return this.client.run({threadId:this.threadId,cwd:this.cwd,input:[{type:'text',text,text_elements:[]}],turnOptions:{sandboxPolicy:{type:'readOnly',networkAccess:false}},onEvent:e=>{
+    const input=[{type:'text',text,text_elements:[]}];
+    if(images.length){
+      const mediaDir=join(this.dir,'workspace','incoming');await mkdir(mediaDir,{recursive:true,mode:0o700});
+      for(const image of images){
+        const extension={'image/png':'.png','image/jpeg':'.jpg','image/gif':'.gif','image/webp':'.webp'}[image.mime];
+        if(!extension||!/^[a-f0-9-]{36}$/.test(image.id))throw new Error('图片输入无效');
+        const name=image.id+extension;await writeFile(join(mediaDir,name),image.bytes,{mode:0o600});
+        input.push({type:'localImage',path:join(this.cwd,'incoming',name)});
+      }
+    }
+    return this.client.run({threadId:this.threadId,cwd:this.cwd,input,turnOptions:{sandboxPolicy:{type:'readOnly',networkAccess:false}},onEvent:e=>{
       if(e.type==='started'&&this.interrupted)void this.client.interrupt().catch(()=>{});
       if(e.phase==='analysis')return;onEvent(e);
     }});

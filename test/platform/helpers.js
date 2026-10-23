@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
+import { readChannelAttachment } from '../../src/platform/attachments.js';
 import { createPlatform } from '../../src/platform/server.js';
 export async function until(fn,timeout=5000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await delay(10);}assert.fail('状态未及时完成');}
 export function mocks(){
@@ -19,15 +20,16 @@ export function mocks(){
   async verify(code){if(code!=='2468')throw new Error('配对码无效');await this.pair();}
   async disconnect(){this.state={phase:'offline',detail:'已断开',qr:null,account:null};this.emitState();}
   async send(text,id,binding){sent.push({dir:this.options.dir,text,id,binding});return {status:'sent'};}
-  input(text,id='input-'+count++){const m={id,text};this.incoming.push(m);this.emit('input',m);}
+  input(text,id='input-'+count++,attachments=[]){const m={id,text,attachments};this.incoming.push(m);this.emit('input',m);}
   history(){return this.incoming;}
+  async readAttachment(a){return readChannelAttachment(this.options.dir,a.id);}
   async close(){}
  }
  class Harness{
   constructor(options){this.options=options;this.threadId=null;this.pending=null;this.closed=false;harnesses.push(this);}
   async prepare({threadId,onThread}){this.closed=false;this.threadId=threadId||'thread-'+count++;onThread(this.threadId);await delay(5);}
-  async run({text,onEvent}){
-   runs.push({threadId:this.threadId,text,dir:this.options.dir});
+  async run({text,images=[],onEvent}){
+   runs.push({threadId:this.threadId,text,images,dir:this.options.dir});
    let resolve,reject;const held=new Promise((r,j)=>{resolve=r;reject=j;});held.catch(()=>{});this.pending={resolve,reject};
    onEvent({type:'started',turnId:'turn-'+count++});
    onEvent({type:'delta',itemId:'one',delta:'先确认你的问题。\n\n',phase:'commentary'});

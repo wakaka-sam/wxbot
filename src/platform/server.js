@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { PlatformStore, AppError } from './store.js';
 import { Auth } from './auth.js';
 import { Engine } from './engine.js';
+import { MEDIA_ID } from './attachments.js';
+import { describeMedia } from '../media.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY',
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
@@ -58,6 +60,20 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    const[,id,action='']=match,a=store.owned(id,user,req.method==='GET'),readOnly=a.user_id!==user.id;
    if(req.method==='GET'){
     if(action==='')return send(200,{assistant:engine.snapshot(id),readOnly});
+    if(action.startsWith('attachments/')){
+      const mediaId=action.slice('attachments/'.length);
+      if(!MEDIA_ID.test(mediaId))throw new AppError(404,'附件不存在');
+      const attachment=store.attachment(id,mediaId);
+      if(!attachment||attachment.error)throw new AppError(404,'附件不存在或下载失败');
+      const runtime=await engine.runtime(a);
+      let bytes;try{bytes=await runtime.channel.readAttachment(attachment);}catch{throw new AppError(404,'附件文件已不可用');}
+      const description=describeMedia(bytes,attachment.name);
+      if(readOnly)store.audit(user.id,'view-attachment',id);
+      const inline=description.kind==='image'&&url.searchParams.get('download')!=='1';
+      res.setHeader('Content-Disposition',`${inline?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(attachment.name.toWellFormed())}`);
+      res.setHeader('Content-Length',bytes.length);
+      return send(200,bytes,inline?description.mime:'application/octet-stream');
+    }
     if(action==='messages'){
       const before=Number(url.searchParams.get('before')||Number.MAX_SAFE_INTEGER),limit=Number(url.searchParams.get('limit')||100);
       if(!Number.isSafeInteger(before)||before<1||!Number.isInteger(limit)||limit<1||limit>200)throw new AppError(400,'分页参数无效');

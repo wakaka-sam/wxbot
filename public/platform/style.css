@@ -6,3 +6,5 @@ dialog{width:min(440px,calc(100vw - 32px));max-height:90vh;overflow:auto;border:
 
 /* Keep secondary information readable on pale backgrounds. */
 :root{--muted:#5d7057}.eyebrow,.brand span,.nav-label,.sidebar-note,.user-card small,.topbar,.assistant-card small,.card-status,.list-tip,.list-empty,.chat-identity p,.message-meta,.composer-footer,.dialog-note,.auth-footnote,.auth-story>small,.admin-user small{color:#617557}.text-button,.icon,.nav-item,.quota,.chat-status,.story-copy>p:not(.eyebrow),.story-lines,.auth-tabs button,.chat-empty>p:last-child,.message.progress .message-body,.message.status .message-body{color:#5a714c}input::placeholder,.composer textarea::placeholder{color:#728267}
+
+.message-attachment{display:flex;flex-direction:column;gap:8px;margin-top:12px;overflow-wrap:anywhere}.attachment-preview{max-width:min(100%,420px);max-height:320px;object-fit:contain;border-radius:10px;align-self:flex-start}.message-attachment a{color:inherit;text-decoration:underline}

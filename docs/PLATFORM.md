@@ -17,7 +17,11 @@
 
 ## 当前运行边界
 
-这是一个支持多用户的文字对话平台。默认 Codex 为对话执行器，禁用服务器命令、文件修改、插件、外部工具和网页搜索；微信附件仅显示文字描述，暂不把文件/图片作为模型输入。所有用户使用部署方的 Codex 授权与额度。
+平台支持文字、ClawBot 图片和文档输入。微信图片作为真正的 `localImage` 输入复制到该助手的隔离 workspace，UTF-8 文本、PDF、DOCX、XLSX 附件经过独立提取模块再传给模型。网页历史可预览图片和下载附件；网页上传尚未开放。默认 Codex 禁用服务器命令、文件修改、插件、外部工具和网页搜索。所有用户使用部署方的 Codex 授权与额度。
+
+每个附件最多 20 MB，每条消息最多 10 个附件；每轮图片最多 10 张且总计 20 MB，文档文字总计最多 60000 字符。PDF 读取前 40 页文字，不包含扫描图 OCR；DOCX 读取正文/表格文字；XLSX 读取前 5 个表、每表 200 行、每行 50 格，公式只用缓存值。不执行宏或文件。视频、SILK 音频、旧版 DOC/XLS 和压缩包等暂不解析，仍保存供下载；失败、截断和提取范围均作为系统消息回传微信及网页。可改发图片或支持的格式。
+
+附件元数据随用户消息和模型任务原子保存，重启补齐时不重复推理。升级自动为消息表增加附件列，已有微信历史补齐元数据但不重跑旧对话。附件下载检查助手所有权，管理员只读访问留审计；其他用户、未登录请求、目录穿越和符号链接均拒绝。
 
 每个助手有独立 CODEX_HOME、workspace 和数据库身份权限；Linux bubblewrap 文件系统/PID 命名空间不挂载宿主 `/root`、其他助手或平台数据库。执行器环境不继承宿主 secrets。缺少隔离工具时失败，不自动退化为裸进程。Codex 进程仍需要自己的授权文件访问模型服务，不能将此隔离当作允许用户任意服务器代码执行的容器平台。未来开放工具执行应另配专用容器、网络策略和凭证代理。
 
@@ -25,10 +29,11 @@
 
 先下载并解压 [v1.0.1 源码包](https://github.com/wakaka-sam/wxbot/releases/tag/v1.0.1)，进入 `wxbot-v1.0.1/`。下列 systemd 示例使用 root 部署路径；安装到其他目录时，必须同时修改单元文件中的 `WorkingDirectory`、`ExecStart` 以及 env 文件中的路径。
 
-需要 Linux、Node.js ≥22.13、bubblewrap、已登录 Codex。当前实际验证版本是 Codex CLI 0.163.0；安装到独立目录，不覆盖现有 CLI：
+需要 Linux、Node.js ≥22.13、bubblewrap、Python 3、poppler-utils（`pdftotext`）以及已登录 Codex。当前实际验证版本是 Codex CLI 0.163.0；安装到独立目录，不覆盖现有 CLI：
 
 ```bash
 npm ci --omit=dev
+# Debian/Ubuntu 文档提取依赖：apt-get install -y python3 poppler-utils
 npm install --prefix /root/.local/share/wxbot-platform-tools @openai/codex@0.163.0
 # 根据系统安装 bubblewrap，设置 PLATFORM_BWRAP 指向 bwrap 可执行文件。
 # 使用部署方既有 Codex 登录，PLATFORM_CODEX_AUTH 指向 auth.json。
@@ -65,6 +70,7 @@ ssh -N -L 3211:127.0.0.1:3211 root@YOUR_SERVER
 | `auth.js` | scrypt、哈希会话、Cookie、限流、密码更新 |
 | `store.js` | SQLite、激活数量事务、消息/任务/投递恢复 |
 | `engine.js` | 生命周期、同用户激活串行化、调度、中断、历史、问候、分段投递 |
+| `attachments.js` / `extract-document.py` | 附件安全读取、限额、文档提取；不依赖具体渠道或模型 |
 | `adapters/wechat.js` | 复用 iLink Bridge；不依赖 Codex |
 | `adapters/codex.js` | 隔离的 Codex app-server；不依赖微信 |
 | `public/platform/` | 无构建步骤的响应式工作台 |
@@ -76,14 +82,15 @@ Channel 是 EventEmitter，接受 `{dir, validateBinding}`，实现：
 - `start()/stop()/close()`：启动、暂停并保留身份、释放资源。
 - `login()/verify(code)/disconnect()`：获取二维码、数字码验证、断开凭证。
 - `snapshot()`：`{phase,detail,qr,account:{id,userId}|null}`，不得返回 token。
-- `history()`：持久收到的 `{id,text}`，用于崩溃后补齐平台消息。
+- `history()`：持久收到的 `{id,text,attachments}`，用于崩溃后补齐平台消息；附件只含 id/name/kind/mime/size/error，不暴露凭据或服务器路径。
+- `readAttachment(metadata)`：返回当前渠道、当前助手的原文件 Buffer，必须限制目录和文件大小。
 - `send(text,id,binding)`：以稳定 UUID 幂等发送，返回 `{status:'sent'|'failed'|'unknown',error?}`；拒绝目标身份变化。
-- 事件 `input:{id,text}`、`paired`、`state`。确认新配对前必须调用 `validateBinding(account)`。
+- 事件 `input:{id,text,attachments}`、`paired`、`state`。确认新配对前必须调用 `validateBinding(account)`。
 
 Harness 接受 `{dir}`，实现：
 
 - `prepare({threadId,onThread})`：创建/恢复，持久 thread ID 通过回调保存。
-- `run({text,onEvent})`：只执行一个轮次，输出公开事件；完成 resolve，被中断 reject 且 `error.code='interrupted'`。
+- `run({text,images,onEvent})`：images 为可选的 `{id,name,mime,bytes}` 数组，不依赖渠道文件路径。只执行一个轮次，输出公开事件；完成 resolve，被中断 reject 且 `error.code='interrupted'`。
 - `interrupt()/close()`：中断当前轮次/释放进程。
 - 事件 `started:{turnId}`、`delta:{itemId,delta,phase}`、`message:{itemId,text,phase}`；phase 区分 `commentary` 与 `final_answer`，不发布内部 reasoning。
 
