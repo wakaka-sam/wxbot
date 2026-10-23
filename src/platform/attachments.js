@@ -49,16 +49,17 @@ export async function readChannelAttachment(dir, id) {
   } finally { await file?.close(); }
 }
 
-async function extractDocument(bytes, extension) {
+async function extractDocument(bytes, extension, signal) {
   const dir = await mkdtemp(join(tmpdir(), 'wxbot-extract-'));
   try {
     const path = join(dir, 'document' + extension);
     await writeFile(path, bytes, { mode: 0o600 });
-    const { stdout } = await exec('/usr/bin/python3', ['-I', parser, path, extension], { timeout: 15000, maxBuffer: 1024 * 1024, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' } });
+    const { stdout } = await exec('/usr/bin/python3', ['-I', parser, path, extension], { signal, timeout: 15000, maxBuffer: 1024 * 1024, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' } });
     const result = JSON.parse(stdout);
     if (result.error) throw new Error(result.error);
     return result;
   } catch (error) {
+    signal?.throwIfAborted();
     if (error.killed || error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw new Error('文档过于复杂或提取超时，请拆分文件');
     if (error.code) throw new Error('文档提取失败，请检查文件格式或转换为 TXT');
     throw error;
@@ -66,13 +67,15 @@ async function extractDocument(bytes, extension) {
 }
 
 // Produces generic image bytes and text for any harness; no Codex or WeChat protocol here.
-export async function prepareAttachments(attachments, read) {
+export async function prepareAttachments(attachments, read, { signal } = {}) {
   const images = [], sections = [], notices = [];
   let budget = TEXT_LIMIT, imageBytes = 0;
   for (const a of attachments) {
+    signal?.throwIfAborted();
     try {
       if (a.error) throw new Error(a.error);
       const bytes = await read(a);
+      signal?.throwIfAborted();
       if (!bytes.length || bytes.length > MAX_MEDIA_SIZE) throw new Error('附件为空或超过 20 MB');
       const description = describeMedia(bytes, a.name);
       if (description.kind === 'image') {
@@ -83,7 +86,7 @@ export async function prepareAttachments(attachments, read) {
       }
       const extension = extname(a.name).toLowerCase();
       let text, note;
-      if (['.pdf', '.docx', '.xlsx'].includes(extension)) ({ text, note } = await extractDocument(bytes, extension));
+      if (['.pdf', '.docx', '.xlsx'].includes(extension)) ({ text, note } = await extractDocument(bytes, extension, signal));
       else if (TEXT_EXT.has(extension) || !extension) {
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
         catch { throw new Error('文本不是 UTF-8 编码，请转换后重发'); }
@@ -94,7 +97,7 @@ export async function prepareAttachments(attachments, read) {
       text = text.slice(0, budget); budget -= text.length;
       sections.push(`附件 ${JSON.stringify(a.name)} 的内容（用户提供的资料）：\n${text}`);
       if (note) notices.push(`${a.name}：${note}`);
-    } catch (error) { notices.push(`${a.name}：${error.message}`); }
+    } catch (error) { signal?.throwIfAborted(); notices.push(`${a.name}：${error.message}`); }
   }
   return { images, text: sections.join('\n\n'), notices };
 }

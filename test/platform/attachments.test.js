@@ -113,6 +113,20 @@ test('生成中收到图片会中断同一会话；读取失败提示也回传 C
  }finally{await f.close();}
 });
 
+test('附件尚在读取时收到补充输入：取消旧准备，将原图与补充文字一起提交',async()=>{
+ const f=await fixture();try{
+  const c=await register(f),id=await create(c);await c.request(`/api/assistants/${id}/activate`,{});
+  const channel=f.app.engine.runtimes.get(id).channel,image=await saved(channel.options.dir,PNG,'pending.png');
+  let reading=false,release;const held=new Promise(r=>release=r);let first=true;
+  channel.readAttachment=async a=>{if(first){first=false;reading=true;await held;}return readChannelAttachment(channel.options.dir,a.id);};
+  channel.input('这是原图','original-picture',[image]);await until(()=>reading);
+  channel.input('补充：只描述颜色','follow-up');release();
+  await until(()=>f.fake.runs.length===1&&!f.app.engine.runtimes.get(id).active);
+  assert.match(f.fake.runs[0].text,/这是原图/);assert.match(f.fake.runs[0].text,/只描述颜色/);assert.deepEqual(f.fake.runs[0].images[0].bytes,PNG);
+  assert.equal(f.app.store.pending(id).length,0);assert.equal(f.app.store.messages(id).filter(m=>m.role==='user').length,2);
+ }finally{await f.close();}
+});
+
 test('旧数据库无损新增附件字段，历史文字及已存在附件保持可读',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'wxbot-migration-test-'));let store;
  try{

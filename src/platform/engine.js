@@ -44,7 +44,7 @@ export class Engine extends EventEmitter {
     this.publish(id,'assistant',this.snapshot(id));return this.snapshot(id);
   });}
   async deactivate(id,user){return this.lock(user.id,async()=>{this.store.deactivate(id,user);await this.stopRuntime(id);return this.snapshot(id);});}
-  async stopRuntime(id){const r=this.runtimes.get(id);this.store.cancelPending(id);if(r){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;await r.harness.interrupt().catch(()=>{});}await r.draining;await r.harness.close();}this.publish(id,'assistant',this.snapshot(id));}
+  async stopRuntime(id){const r=this.runtimes.get(id);this.store.cancelPending(id);if(r){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt().catch(()=>{});}await r.draining;await r.harness.close();}this.publish(id,'assistant',this.snapshot(id));}
   requireActive(id){const a=this.store.assistant(id);if(!a?.active)throw new AppError(409,'请先激活此助手','INACTIVE');return a;}
   async channelCommand(id,action,body={}){
     const a=this.requireActive(id),r=await this.runtime(a);
@@ -63,7 +63,7 @@ export class Engine extends EventEmitter {
     this.publish(id,'message',result.message);
     this.deliver(id);
     const r=this.runtimes.get(id);
-    if(r?.active){r.active.interrupted=true;void r.harness.interrupt().catch(()=>{});this.publish(id,'status',{message:'收到新输入，正在中断当前回复并调整方向'});}
+    if(r?.active){r.active.superseded=true;r.active.interrupted=true;r.active.inputAbort.abort();void r.harness.interrupt().catch(()=>{});this.publish(id,'status',{message:'收到新输入，正在中断当前回复并调整方向'});}
     this.wake(id);return result;
   }
   async greet(id){
@@ -111,7 +111,7 @@ export class Engine extends EventEmitter {
       const jobs=this.store.pending(id);if(!jobs.length)break;
       const selected=jobs[0].kind==='summary'?[jobs[0]]:jobs.filter(j=>j.kind==='chat').slice(0,20);
       const job=selected[0];for(const j of selected)this.store.jobState(j.id,'running');
-      const run=r.active={interrupted:false,items:new Map(),jobId:job.id};this.publish(id,'assistant',this.snapshot(id));
+      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id};this.publish(id,'assistant',this.snapshot(id));
       const paragraph=(item,complete=false)=>{
         while(item.text.length>item.sent){
           const remainder=item.text.slice(item.sent);let length=0;
@@ -124,13 +124,14 @@ export class Engine extends EventEmitter {
         const a=this.store.assistant(id);await r.harness.prepare({threadId:a.thread_id,onThread:thread=>this.store.thread(id,thread)});
         if(this.closed||!this.store.assistant(id)?.active)throw Object.assign(new Error('助手已停止'),{code:'interrupted'});
         const attachments=selected.flatMap(j=>this.store.message(j.message_id)?.attachments||[]);
-        const prepared=await prepareAttachments(attachments,a=>r.channel.readAttachment(a));
+        const prepared=await prepareAttachments(attachments,a=>r.channel.readAttachment(a),{signal:run.inputAbort.signal});
         if(run.interrupted||this.closed)throw Object.assign(new Error('本轮已中断'),{code:'interrupted'});
         if(prepared.notices.length){
           const m=this.store.addMessage(id,{role:'system',kind:'status',text:'附件处理提示：\n'+prepared.notices.join('\n'),jobId:job.id});
           this.publish(id,'message',m);this.enqueueText(id,m.text,`attachment-status:${job.id}`);
         }
         const prompt=[selected.map(j=>j.prompt).join('\n\n[后续输入]\n'),prepared.text,prepared.notices.length?'附件读取说明（请勿声称已读取未成功解析的内容）：\n'+prepared.notices.join('\n'):''].filter(Boolean).join('\n\n');
+        run.submitted=true;
         const task=r.harness.run({text:prompt,images:prepared.images,onEvent:event=>{
           if(r.active!==run)return;
           if(event.type==='started'){if(run.interrupted)void r.harness.interrupt().catch(()=>{});return;}
@@ -146,12 +147,13 @@ export class Engine extends EventEmitter {
       }catch(error){
         const interrupted=run.interrupted||this.closed||error.code==='interrupted';
         for(const item of run.items.values()){paragraph(item,true);this.publish(id,'message',this.store.updateMessage(item.id,item.text,interrupted?'interrupted':'error'));}
-        for(const j of selected)this.store.jobState(j.id,interrupted?'interrupted':'failed');
+        const requeue=run.superseded&&!run.submitted&&!this.closed&&this.store.assistant(id)?.active;
+        for(const j of selected)this.store.jobState(j.id,requeue?'pending':interrupted?'interrupted':'failed');
         if(!interrupted){const m=this.store.addMessage(id,{role:'system',kind:'status',text:`执行失败：${error.message}`,state:'error'});this.publish(id,'message',m);this.enqueueText(id,m.text,`error:${m.id}`);await r.harness.close();}
       }finally{r.active=null;this.publish(id,'assistant',this.snapshot(id));}
     }
   }
-  async interrupt(id){const r=this.runtimes.get(id);this.store.cancelPending(id);if(r?.active){r.active.interrupted=true;await r.harness.interrupt();}}
-  async close(){this.closed=true;await Promise.all([...this.locks.values()].map(p=>p.catch(()=>{})));for(const r of this.runtimes.values()){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;await r.harness.interrupt().catch(()=>{});}}
+  async interrupt(id){const r=this.runtimes.get(id);this.store.cancelPending(id);if(r?.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt();}}
+  async close(){this.closed=true;await Promise.all([...this.locks.values()].map(p=>p.catch(()=>{})));for(const r of this.runtimes.values()){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt().catch(()=>{});}}
     await Promise.all([...this.runtimes.values()].map(async r=>{await r.draining;await r.delivering;await r.harness.close();await r.channel.close();}));}
 }
