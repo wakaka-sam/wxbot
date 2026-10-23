@@ -13,10 +13,12 @@ export function trustedBase(value) {
 }
 
 export class Weixin {
-  constructor({ baseUrl = DEFAULT_BASE, fetchImpl = fetch, routeTag = process.env.WEIXIN_ROUTE_TAG } = {}) {
+  constructor({ baseUrl = DEFAULT_BASE, fetchImpl = fetch, routeTag = process.env.WEIXIN_ROUTE_TAG,
+    onSendResult = event => console.info(JSON.stringify(event)) } = {}) {
     this.baseUrl = baseUrl;
     this.fetch = fetchImpl;
     this.routeTag = routeTag;
+    this.onSendResult = onSendResult;
   }
   async request(base, path, { signal, token, body, timeout = 40000, allowEmpty = false } = {}) {
     const headers = { 'iLink-App-Id': 'bot', 'iLink-App-ClientVersion': '132106' };
@@ -106,8 +108,16 @@ export class Weixin {
     if (attachment.kind === 'video') return { type: 5, video_item: { media, video_size: encrypted.length } };
     return { type: 4, file_item: { media, file_name: attachment.name, len: String(bytes.length) } };
   }
-  sendItem(account, item, clientId, contextToken) {
-    return this.request(account.baseUrl, '/ilink/bot/sendmessage', {
+  async sendItem(account, item, clientId, contextToken) {
+    const started = Date.now();
+    const numeric = value => value != null && value !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
+    const report = details => {
+      // Correlate with the outbox UUID without logging users, message text or credentials.
+      try { this.onSendResult({ event: 'wechat.send_result', clientId, hasContext: Boolean(contextToken),
+        durationMs: Date.now() - started, ...details }); } catch { /* Logging must not trigger retries. */ }
+    };
+    try {
+    const result = await this.request(account.baseUrl, '/ilink/bot/sendmessage', {
       token: account.token, timeout: 20000, allowEmpty: true,
       body: {
         msg: { from_user_id: '', to_user_id: account.userId, client_id: clientId,
@@ -118,5 +128,12 @@ export class Weixin {
         base_info: { channel_version: '2.4.10', bot_agent: 'ClawBotLocal/1.0.0' },
       },
     });
+    report({ outcome: 'accepted', ret: numeric(result.ret), errcode: numeric(result.errcode),
+      emptyAcknowledgement: Object.keys(result).length === 0 });
+    return result;
+    } catch (error) {
+      report({ outcome: typeof error.code === 'number' ? 'rejected' : 'unknown', errorCode: numeric(error.code) });
+      throw error;
+    }
   }
 }
