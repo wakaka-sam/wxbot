@@ -64,6 +64,8 @@ ssh -N -L 3211:127.0.0.1:3211 root@YOUR_SERVER
 
 公开域名部署时使用可信 HTTPS 反向代理，设置 `PLATFORM_PUBLIC_URL` 为准确 origin，代理保留 Host 并关闭 SSE 缓冲。仍让后端只监听 loopback。HTTPS 模式 Cookie 带 Secure；默认 HttpOnly/SameSite=Strict，写请求要求同源及专用请求头。跨用户权限在后端检查，不依赖前端隐藏按钮。注册当前开放，没有邮件验证/找回密码；单来源注册限 10 次/小时，适合当前内部部署。
 
+允许从飞书等外站链接打开公开首页及静态资源（仅 GET）；这些响应不含账号和会话数据。接口（含历史、附件和 SSE）及写操作仍执行 Origin/Fetch Metadata 校验，所有请求仍检查 Host，页面禁止被 iframe 嵌入。
+
 数据：`PLATFORM_DATA_DIR/platform.sqlite` 为用户、助手、消息、任务与投递表；`assistants/<id>/channel` 保存微信消息和凭证；`assistants/<id>/harness/home/.codex` 保存 Codex 授权及 thread 文件。数据库和 thread 文件应一起备份。备份前停止新平台服务，复制整个数据目录后重新启动，旧 3210 服务不受影响。凭证和备份均需仅部署账户可读，不提交 Git。
 
 进程正常停止会中断执行中的轮次并保留上下文。崩溃恢复将 running job 和 streaming 消息标为 interrupted；pending job 继续执行，已运行的任务不自动重放。投递状态未知时不自动重发，避免重复通知。页面显示微信投递异常，完整输出仍保存在网页。此版本未提供失败投递手动重试界面。

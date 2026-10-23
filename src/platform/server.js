@@ -8,6 +8,7 @@ import { Engine } from './engine.js';
 import { MEDIA_ID } from './attachments.js';
 import { describeMedia } from '../media.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
+const publicFiles={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY',
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
 export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR||join(root,'platform-data')),publicUrl=process.env.PLATFORM_PUBLIC_URL,adminUsername=process.env.PLATFORM_ADMIN_USERNAME||'admin',adminPassword=process.env.PLATFORM_ADMIN_PASSWORD,engineOptions={}}={}){
@@ -23,9 +24,13 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    if(closing)return send(503,{error:'服务正在重启'});
    const port=server.address()?.port,origins=[`http://127.0.0.1:${port}`,`http://localhost:${port}`,...(publicUrl?[new URL(publicUrl).origin]:[])];
    if(!origins.some(o=>new URL(o).host===req.headers.host))return send(403,{error:'不允许此访问地址'});
-   if(req.headers.origin&&!origins.includes(req.headers.origin))return send(403,{error:'不允许跨站访问'});
-   if(req.headers['sec-fetch-site']==='cross-site')return send(403,{error:'不允许跨站访问'});
    const url=new URL(req.url,origins[0]);let body={};
+   // External links may load the public shell. Never exempt API requests or writes.
+   const publicGet=req.method==='GET'&&Object.hasOwn(publicFiles,url.pathname);
+   if(!publicGet){
+    if(req.headers.origin&&!origins.includes(req.headers.origin))return send(403,{error:'不允许跨站访问'});
+    if(req.headers['sec-fetch-site']==='cross-site')return send(403,{error:'不允许跨站访问'});
+   }
    if(req.method==='POST'){
     if(req.headers['x-wxbot-platform']!=='1')return send(403,{error:'缺少操作校验标识'});
     const chunks=[];let length=0;for await(const c of req){length+=c.length;if(length>65536)throw new AppError(413,'请求过大');chunks.push(c);}try{body=length?JSON.parse(Buffer.concat(chunks).toString()):{};}catch{throw new AppError(400,'请求格式无效');}
@@ -39,8 +44,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    if(path==='/health')return send(200,{ok:true});
    if(!path.startsWith('/api/')){
     if(req.method!=='GET')throw new AppError(405,'请求方法不支持');
-    const files={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
-    const file=files[path];if(!file)throw new AppError(404,'页面不存在');return send(200,await readFile(join(root,'public/platform',file[0])),file[1]);
+    const file=publicGet?publicFiles[path]:null;if(!file)throw new AppError(404,'页面不存在');return send(200,await readFile(join(root,'public/platform',file[0])),file[1]);
    }
    if(!user)throw new AppError(401,'请先登录');
    if(path==='/api/password'&&req.method==='POST'){await auth.changePassword(user,body.oldPassword,body.newPassword);auth.issue(user,res);return send(200,{ok:true});}
