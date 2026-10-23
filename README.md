@@ -89,6 +89,29 @@ npm start
 
 终端按 `Ctrl+C` 停止。关闭浏览器不会停止服务，重新打开后可以看到离线期间服务收到的消息。
 
+## 命令行发送：`wxbot send`
+
+在项目目录运行 `npm link` 后可使用 `wxbot` 命令；也可以直接运行 `node src/cli.js send`，无需全局安装。首版支持发送文字（最多 4000 个 UTF-16 字符），`--content-file` 读取 UTF-8 正文，不是发送文件附件。
+
+本机操作需要先启动 3210 消息台并扫码连接：
+
+```bash
+wxbot send '任务完成'
+wxbot send --profile <连接ID> --content-file /path/message.txt
+wxbot send --server http://127.0.0.1:3210 <<'EOF'
+第一行
+第二行
+EOF
+```
+
+默认连接为 `default`，可通过 `--profile` 或 `WXBOT_PROFILE` 选择；服务地址支持 `--server` 或 `WXBOT_SERVER`，只接受本机 HTTP。命令复用服务端账号、发送记录和去重回执，不直接读取微信登录 token，也不启动额外的微信轮询。
+
+命令输出 JSON，包含 `requestId`、`id`、`status` 和可能的 `error`。只有 `sent` 返回退出码 0，表示微信接口接受请求；`unknown` 返回 2，其他失败返回 1。结果不明时先检查微信；可用相同 `--request-id <UUID>` 和完全相同正文再次获取回执，不能换标识盲目重发。连接切换或重新绑定后不要重试旧请求。
+
+两种模式的 Codex 会话都可主动发送：平台在助手自己的目录安装 `wxbot-send` Skill 和 `wxbot` 包装命令，本机模式通过开发者指令和 PATH 提供命令。每轮输入提供 `wxbot send --turn <本轮UUID>`；宿主只向这一轮绑定的微信用户代发，轮次结束后标识失效。该通道不需要助手访问宿主 HTTP 或持有微信凭证。平台发送同时保存到网页历史与 SQLite outbox；完全相同的最终回复不会再次发往微信，其他最终回复仍自动发送。平台最终答案等完整消息完成后投递，公开进度仍可分段发送，网页继续实时显示增量。
+
+详见 [Codex 交互与发送通道](docs/CODEX-INTEGRATION.md)。
+
 ## 连接管理页面
 
 打开 **http://127.0.0.1:3210/connections**，或从消息收件箱左侧点击「所有连接管理」。

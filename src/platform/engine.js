@@ -6,6 +6,7 @@ import { AppError } from './store.js';
 import { WechatChannel } from './adapters/wechat.js';
 import { CodexHarness } from './adapters/codex.js';
 import { normalizeAttachments, prepareAttachments } from './attachments.js';
+import { validateText } from '../send-client.js';
 const uuidFor=value=>{const h=createHash('sha256').update(value).digest('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;};
 export class Engine extends EventEmitter {
   constructor(store,dir,{channelFactory=o=>new WechatChannel(o),harnessFactory=o=>new CodexHarness(o)}={}){
@@ -86,6 +87,37 @@ export class Engine extends EventEmitter {
     for(const delivery of this.textDeliveries(id,text,key))this.store.queueDelivery(delivery.id,id,delivery.payload);
     this.deliver(id);
   }
+  async sendFromTool(id,run,binding,{requestId,text}){
+    validateText(text);
+    const r=this.runtimes.get(id);
+    if(this.closed||r?.active!==run||run.interrupted)throw new AppError(409,'发送轮次已结束');
+    this.requireActive(id);
+    const current=r.channel.snapshot().account;
+    if(!binding||current?.id!==binding.id||current?.userId!==binding.userId)throw new AppError(409,'本轮微信绑定已失效，请重新连接后再发送');
+    const deliveryId=uuidFor(`wxbot-send:${id}:${run.jobId}:${requestId}`);
+    const payload={text,binding:{accountId:binding.id,userId:binding.userId}};
+    const prior=this.store.delivery(deliveryId);
+    if(prior&&JSON.stringify(JSON.parse(prior.payload))!==JSON.stringify(payload))throw new AppError(409,'同一 request-id 不能修改正文或接收账号');
+    if(!prior){
+      const message=this.store.tx(()=>{
+        const m=this.store.addMessage(id,{id:deliveryId,role:'assistant',text,source:'wxbot-send',jobId:run.jobId});
+        this.store.queueDelivery(deliveryId,id,payload);return m;
+      });
+      this.publish(id,'message',message);
+    }
+    // An already-running delivery loop may have taken its pending snapshot
+    // before this request was committed. Join successive drains until this
+    // receipt settles, rather than reporting a queued message as a failure.
+    do{
+      this.deliver(id);
+      if(!r.delivering)break;
+      await r.delivering;
+    }while(!this.closed&&!run.interrupted&&this.store.assistant(id)?.active&&['pending','sending'].includes(this.store.delivery(deliveryId).state));
+    const receipt=this.store.delivery(deliveryId);
+    if(receipt.state!=='failed')run.explicitTexts.add(text.trim());
+    const unresolved=['pending','sending'].includes(receipt.state);
+    return {id:deliveryId,status:unresolved?'unknown':receipt.state,error:receipt.error||(unresolved?'消息已入队，尚未确认微信接收；请先核实，不要换 request-id 重发':null)};
+  }
   deliver(id){
     const r=this.runtimes.get(id);if(!r||r.delivering||this.closed||!this.store.assistant(id)?.active)return;
     if(!['connected','connecting','reconnecting'].includes(r.channel.snapshot().phase))return;
@@ -111,8 +143,13 @@ export class Engine extends EventEmitter {
       const jobs=this.store.pending(id);if(!jobs.length)break;
       const selected=jobs[0].kind==='summary'?[jobs[0]]:jobs.filter(j=>j.kind==='chat').slice(0,20);
       const job=selected[0];for(const j of selected)this.store.jobState(j.id,'running');
-      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id,activities:new Set()};this.publish(id,'assistant',this.snapshot(id));
+      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id,activities:new Set(),explicitTexts:new Set()};this.publish(id,'assistant',this.snapshot(id));
+      const sendBinding=r.channel.snapshot().account;
       const paragraph=(item,complete=false)=>{
+        // Final text waits for completion so an explicit send in this turn can
+        // suppress the identical automatic reply. Web deltas remain immediate.
+        if(item.phase!=='commentary'&&!complete)return;
+        if(run.explicitTexts.has(item.text.trim())){item.sent=item.text.length;return;}
         while(item.text.length>item.sent){
           const remainder=item.text.slice(item.sent);let length=0;
           const boundary=remainder.indexOf('\n\n');
@@ -132,7 +169,7 @@ export class Engine extends EventEmitter {
         }
         const prompt=[selected.map(j=>j.prompt).join('\n\n[后续输入]\n'),prepared.text,prepared.notices.length?'附件读取说明（请勿声称已读取未成功解析的内容）：\n'+prepared.notices.join('\n'):''].filter(Boolean).join('\n\n');
         run.submitted=true;
-        const task=r.harness.run({text:prompt,images:prepared.images,onEvent:event=>{
+        const task=r.harness.run({text:prompt,images:prepared.images,onSend:request=>this.sendFromTool(id,run,sendBinding,request),onEvent:event=>{
           if(r.active!==run)return;
           if(event.type==='started'){if(run.interrupted)void r.harness.interrupt().catch(()=>{});return;}
           if(event.type==='activity'){
@@ -142,7 +179,8 @@ export class Engine extends EventEmitter {
           }
           if(!['delta','message'].includes(event.type))return;
           let item=run.items.get(event.itemId);
-          if(!item){const kind=job.kind==='summary'?'summary':event.phase==='commentary'?'progress':'chat';const m=this.store.addMessage(id,{role:'assistant',kind,state:'streaming',source:'harness',jobId:job.id});item={id:m.id,text:'',sent:0};run.items.set(event.itemId,item);}
+          if(!item){const kind=job.kind==='summary'?'summary':event.phase==='commentary'?'progress':'chat';const m=this.store.addMessage(id,{role:'assistant',kind,state:'streaming',source:'harness',jobId:job.id});item={id:m.id,text:'',sent:0,phase:event.phase};run.items.set(event.itemId,item);}
+          item.phase=event.phase||item.phase;
           item.text=event.type==='delta'?item.text+event.delta:event.text;
           const message=this.store.updateMessage(item.id,item.text,event.type==='message'?'complete':'streaming');
           this.publish(id,'message',message);paragraph(item,event.type==='message');

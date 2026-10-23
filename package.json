@@ -11,11 +11,12 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/server.js && node --check src/profiles.js && node --check src/bridge.js && node --check src/weixin.js && node --check src/media.js && node --check src/store.js && node --check src/codex-client.js && node --check src/codex-manager.js && node --check public/app.js && node --check public/connections.js && node --check scripts/package-release.mjs && node --check src/platform/server.js && node --check src/platform/engine.js && node --check src/platform/store.js && node --check src/platform/auth.js && node --check src/platform/adapters/codex.js && node --check src/platform/adapters/wechat.js && node --check public/platform/app.js && node --check scripts/release-notes.mjs && node --check src/platform/attachments.js && node --check src/platform/adapters/codex-policy.js && node --check scripts/test-platform-agent.mjs",
+    "check": "node --check src/server.js && node --check src/profiles.js && node --check src/bridge.js && node --check src/weixin.js && node --check src/media.js && node --check src/store.js && node --check src/codex-client.js && node --check src/codex-manager.js && node --check public/app.js && node --check public/connections.js && node --check scripts/package-release.mjs && node --check src/platform/server.js && node --check src/platform/engine.js && node --check src/platform/store.js && node --check src/platform/auth.js && node --check src/platform/adapters/codex.js && node --check src/platform/adapters/wechat.js && node --check public/platform/app.js && node --check scripts/release-notes.mjs && node --check src/platform/attachments.js && node --check src/platform/adapters/codex-policy.js && node --check scripts/test-platform-agent.mjs && node --check src/cli.js && node --check src/send-client.js && node --check src/send-relay.js && node --check src/send-tools.js && node --check scripts/test-platform-send.mjs",
     "release:pack": "node scripts/package-release.mjs",
     "platform": "node src/platform/server.js",
     "test:platform": "node --test test/platform/*.test.js",
-    "test:browser": "node scripts/test-platform-browser.mjs"
+    "test:browser": "node scripts/test-platform-browser.mjs",
+    "send": "node src/cli.js send"
   },
   "dependencies": {
     "json-bigint": "1.0.0",
@@ -28,5 +29,8 @@
   "homepage": "https://github.com/wakaka-sam/wxbot#readme",
   "bugs": {
     "url": "https://github.com/wakaka-sam/wxbot/issues"
+  },
+  "bin": {
+    "wxbot": "src/cli.js"
   }
 }

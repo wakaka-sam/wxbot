@@ -7,6 +7,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { agentConfig } from './codex-policy.js';
 import { CodexClient } from '../../codex-client.js';
+import { createSendRelay } from '../../send-relay.js';
+import { installSendTools, SEND_INSTRUCTIONS } from '../../send-tools.js';
 const exec=promisify(execFile);
 
 const INSTRUCTIONS=`你是用户创建的私人助手。网页与微信共用同一会话，直接用中文帮助用户。
@@ -31,13 +33,14 @@ export class CodexHarness {
     await this.close();
     const home=join(this.dir,'home'),workspace=join(this.dir,'workspace');
     await mkdir(join(home,'.codex'),{recursive:true,mode:0o700});await mkdir(workspace,{recursive:true,mode:0o700});
+    this.sendTools=await installSendTools(home,{visibleHome:'/home/assistant',node:process.execPath});
     await writeFile(join(home,'.codex','auth.json'),await readFile(this.authFile),{mode:0o600});
     for(const path of ['.cache','.local','.npm'])await mkdir(join(home,path),{recursive:true,mode:0o700});
     // Each app-server owns a proxy listener; avoid a shared fixed port across assistants.
     const listener=net.createServer();await new Promise((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',resolve);});
     const proxyPort=listener.address().port;await new Promise(resolve=>listener.close(resolve));
     await writeFile(join(home,'.codex','config.toml'),agentConfig(this.model,proxyPort),{mode:0o600});
-    let command=this.command,args=[],cwd=workspace,env={PATH:'/usr/local/bin:/usr/bin:/bin',HOME:home,CODEX_HOME:join(home,'.codex'),LANG:'C.UTF-8',NODE_PATH:'/opt/wxbot-agent-tools/node_modules',PLAYWRIGHT_BROWSERS_PATH:'/opt/wxbot-agent-tools/browsers'};
+    let command=this.command,args=[],cwd=workspace,env={PATH:'/home/assistant/.local/bin:/usr/local/bin:/usr/bin:/bin',HOME:home,CODEX_HOME:join(home,'.codex'),LANG:'C.UTF-8',NODE_PATH:'/opt/wxbot-agent-tools/node_modules',PLAYWRIGHT_BROWSERS_PATH:'/opt/wxbot-agent-tools/browsers'};
     if(this.isolated){
       command=process.env.PLATFORM_BWRAP||'/root/.local/bin/bwrap';
       if(!existsSync(command))throw new Error('平台需要 bubblewrap 隔离执行器；未启动不隔离的替代进程');
@@ -54,13 +57,19 @@ export class CodexHarness {
       command=runner;
     }else this.cwd=workspace;
     this.client=new CodexClient({command,args,cwd,env});await this.client.initialize();
-    const params={cwd:this.cwd,model:this.model,approvalPolicy:'never',config:{default_permissions:'assistant'},developerInstructions:INSTRUCTIONS};
+    const params={cwd:this.cwd,model:this.model,approvalPolicy:'never',config:{default_permissions:'assistant'},developerInstructions:INSTRUCTIONS+'\n'+SEND_INSTRUCTIONS};
     const result=threadId?await this.client.request('thread/resume',{...params,threadId,excludeTurns:true}):await this.client.request('thread/start',{...params,ephemeral:false});
     this.threadId=result.thread?.id||threadId;if(!this.threadId)throw new Error('Codex 未返回会话 ID');onThread(this.threadId);
   }
-  async run({text,images=[],onEvent}){
+  async run({text,images=[],onEvent,onSend}){
     this.interrupted=false;
-    const input=[{type:'text',text,text_elements:[]}];
+    const relay=onSend?await createSendRelay(this.sendTools.relayRoot,request=>{
+      if(this.interrupted||!onSend)throw new Error('发送轮次已结束');
+      return onSend(request);
+    }):null;
+    this.sendRelay=relay;
+    try{
+    const input=[{type:'text',text:relay?`本轮微信发送命令：wxbot send --turn ${relay.turn}。只在需要向微信发送文字时使用，正文通过 stdin 或参数传入。\n\n${text}`:text,text_elements:[]}];
     if(images.length){
       const mediaDir=join(this.dir,'workspace','incoming');await mkdir(mediaDir,{recursive:true,mode:0o700});
       for(const image of images){
@@ -70,16 +79,19 @@ export class CodexHarness {
         input.push({type:'localImage',path:join(this.cwd,'incoming',name)});
       }
     }
-    return this.client.run({threadId:this.threadId,cwd:this.cwd,input,onEvent:e=>{
+    return await this.client.run({threadId:this.threadId,cwd:this.cwd,input,onEvent:e=>{
       if(e.type==='started'&&this.interrupted)void this.client.interrupt().catch(()=>{});
       if(e.phase==='analysis')return;onEvent(e);
     }});
+    }finally{await relay?.close();if(this.sendRelay===relay)this.sendRelay=null;}
   }
   async interrupt(){this.interrupted=true;await this.client?.interrupt();}
   async close(){
+    this.interrupted=true;
     const client=this.client,scope=this.scope;this.client=null;this.scope=null;
     const closing=client?.close();
     if(scope)await exec('/usr/bin/systemctl',['stop',scope],{timeout:10000}).catch(()=>{});
     await closing;
+    await this.sendRelay?.close();this.sendRelay=null;
   }
 }
