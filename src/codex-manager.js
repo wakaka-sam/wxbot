@@ -129,14 +129,15 @@ export class CodexManager {
     const explicitReceipts = new Map();
     try {
       const client = await this.ensureClient();
-      relay = await createSendRelay(this.sendTools.relayRoot, async ({requestId,text}) => {
+      relay = await createSendRelay(this.sendTools.relayRoot, async ({requestId,text,attachment}) => {
         if(this.closed||this.active?.id!==job.id||this.active.cancelled)throw new Error('发送轮次已结束');
         const hash=createHash('sha256').update(`wxbot-send:${job.id}:${requestId}`).digest('hex');
         const id=`${hash.slice(0,8)}-${hash.slice(8,12)}-${hash.slice(12,16)}-${hash.slice(16,20)}-${hash.slice(20,32)}`;
-        const receipt=await this.bridge.send(text,id,{accountId:job.accountId,userId:job.userId,source:'wxbot-send'});
+        const target={accountId:job.accountId,userId:job.userId,source:'wxbot-send'};
+        const receipt=attachment?await this.bridge.sendMedia(Buffer.from(attachment.data,'base64'),attachment.name,attachment.kind,id,target):await this.bridge.send(text,id,target);
         // Unknown/in-flight sends may already have reached WeChat. Never
         // automatically re-send identical final text with a different ID.
-        if(receipt.status!=='failed')explicitReceipts.set(text.trim(),receipt);
+        if(receipt.status!=='failed'&&text.trim())explicitReceipts.set(text.trim(),receipt);
         return receipt;
       });
       if (this.active.cancelled) throw new Error(this.active.cancelled);

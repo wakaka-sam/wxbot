@@ -69,7 +69,7 @@ export class CodexHarness {
     }):null;
     this.sendRelay=relay;
     try{
-    const input=[{type:'text',text:relay?`本轮微信发送命令：wxbot send --turn ${relay.turn}。只在需要向微信发送文字时使用，正文通过 stdin 或参数传入。\n\n${text}`:text,text_elements:[]}];
+    const input=[{type:'text',text:relay?`本轮微信发送命令：wxbot send --turn ${relay.turn}。文字通过 stdin 或参数传入；图片用 --image /workspace/图片.png，文件用 --file /workspace/文件.pdf，每次一项，附件最多 20 MB。\n\n${text}`:text,text_elements:[]}];
     if(images.length){
       const mediaDir=join(this.dir,'workspace','incoming');await mkdir(mediaDir,{recursive:true,mode:0o700});
       for(const image of images){

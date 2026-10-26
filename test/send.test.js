@@ -50,7 +50,7 @@ test('wxbot send 实际子进程经本机服务发送：多行、profile、幂�
 });
 
 test('CLI 参数与目标限制：拒绝未知参数、远端地址、账号变更，正文文件保留换行', async () => {
-  assert.throws(() => parseArgs(['send', '--file', 'secret']), /未知参数/);
+  assert.throws(() => parseArgs(['send', '--unknown', 'secret']), /未知参数/);
   const denied = await sendText({ server: 'https://example.com', text: '不要泄漏' }, { fetchImpl: () => assert.fail('must not fetch') });
   assert.equal(denied.status, 'failed');
   const dir = await mkdtemp(join(tmpdir(), 'wxbot-relay-')), sent = [];

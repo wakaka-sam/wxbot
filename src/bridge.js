@@ -163,6 +163,17 @@ export class Bridge extends EventEmitter {
       return { id, status: receipt.status, error: receipt.error };
     }
     if (!this.snapshot().canSend) throw new Error('微信连接暂不可用，请完成扫码或恢复连接');
+    if (bytes && this.replyLimit) {
+      const budget=this.store.replyBudget(account,this.replyLimit);
+      if (budget.remaining===1) {
+        // Keep the tenth slot as a text notice: do not rely on mixed media/text
+        // rendering or spend an eleventh message after the attachment.
+        const h=createHash('sha256').update(`quota-notice:${account.id}:${account.userId}:${budget.epoch}`).digest('hex');
+        const noticeId=`${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
+        await this.send('还有图片或文件等待发送。',noticeId,expected);
+        return {id,status:'blocked',budgetEpoch:budget.epoch,error:'已到微信回复上限，附件已排队，请在微信发送消息后继续'};
+      }
+    }
     const message = { id, direction: 'outbound', sender: '本机', recipient: account.userId,
       receivedAt: new Date().toISOString(), text, quotes: [], attachments: [], status: 'sending', source: expected.source || 'local' };
     // Reserve the receipt before the first await so simultaneous retries cannot send twice.

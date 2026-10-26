@@ -70,7 +70,7 @@ export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || 
           }
           const delivery = await bridge.sendMedia(Buffer.concat(chunks),
             decodeURIComponent(req.headers['x-file-name'] || ''), req.headers['x-file-kind'] || 'auto',
-            req.headers['x-request-id'], { accountId: req.headers['x-account-id'] });
+            req.headers['x-request-id'], { accountId: req.headers['x-account-id'], userId: req.headers['x-user-id'] });
           return send(200, { ...snapshot(), delivery });
         }
         let body = {};

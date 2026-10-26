@@ -3,6 +3,8 @@ import { Store } from '../../store.js';
 import { Bridge } from '../../bridge.js';
 import { Weixin } from '../../weixin.js';
 import { normalizeAttachments, readChannelAttachment } from '../attachments.js';
+import { describeMedia, saveMedia } from '../../media.js';
+import { validateSend } from '../../send-client.js';
 
 const inputMessage=m=>({id:m.id,text:m.text||((m.attachments||[]).length?'':'[空消息]'),attachments:normalizeAttachments(m.attachments)});
 
@@ -27,5 +29,14 @@ export class WechatChannel extends EventEmitter {
   async verify(code){this.bridge.verify(code);}
   async disconnect(){this.bridge.logout();await this.bridge.close();}
   async send(text,id,binding){return this.bridge.send(text,id,binding);}
+  async stageAttachment(attachment){
+    validateSend('',attachment);
+    const bytes=Buffer.from(attachment.data,'base64');
+    return saveMedia(bytes,describeMedia(bytes,attachment.name,attachment.kind),this.dir);
+  }
+  async sendAttachment(attachment,id,binding){
+    const bytes=await this.readAttachment(attachment);
+    return this.bridge.sendMedia(bytes,attachment.name,attachment.kind,id,binding);
+  }
   async close(){await this.bridge.close();this.store.close();}
 }

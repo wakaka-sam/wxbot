@@ -8,9 +8,15 @@ wxbot 使用 Codex CLI 自带的 `app-server --listen stdio://`，无需增加 P
 
 ## 命令与会话上下文
 
-`package.json` 的 bin 指向 `src/cli.js`。CLI 和 `send-client.js` 仅依赖 Node 内置模块，可以复制到隔离助手中。支持参数正文、stdin、`--content-file`、`--request-id`；首版只发文字。
+### 图片和文件
 
-人工本机调用：读取 `/api/state?profile=…` 的公开绑定身份，再向 `/api/send?profile=…` 提交正文、UUID、accountId 和 userId。Bridge 在实际发送前核对绑定并持久化去重回执。发送只针对当前扫码用户，不接受任意联系人。
+助手可使用 `wxbot send --turn <本轮UUID> --image /workspace/chart.png` 或 `wxbot send --turn <本轮UUID> --file /workspace/report.pdf`。每次一张图片、一个文件或一条文字，不混传说明文字；附件限非空、20 MB 以内的普通文件。图片支持 PNG/JPEG/GIF/WebP，其他格式作为文件发送。CLI 在自身执行环境读取字节，不把宿主文件路径交给 relay；宿主验证附件内容和元数据，固定本轮微信绑定。
+
+附件内容与名称、类型一起参与 request-id 去重。平台先持久化附件并登记消息/outbox，再发送到微信；网页历史使用现有所有权校验提供预览和下载。排队附件不依赖原文件或临时 relay 目录，重启后仍可发送。文字和附件共享每次微信输入后的 10 条额度；若附件轮到最后一个额度，先发送第 10 条文字提醒，附件保持排队至下次微信输入。unknown 表示尚未确认发送，不得通过换 request-id 重发。
+
+`package.json` 的 bin 指向 `src/cli.js`。CLI 和 `send-client.js` 仅依赖 Node 内置模块，可以复制到隔离助手中。支持参数正文、stdin、`--content-file`、`--image`、`--file`、`--request-id`。
+
+人工本机调用：读取 `/api/state?profile=…` 的公开绑定身份，再向 `/api/send?profile=…` 提交正文或 `/api/send-media?profile=…` 提交附件字节，并携带 UUID、accountId 和 userId。Bridge 在实际发送前核对绑定并持久化去重回执。发送只针对当前扫码用户，不接受任意联系人。
 
 模型调用：每轮生成一个独立 UUID 和 relay 目录，输入中明确提供 `wxbot send --turn UUID`。本机模式注入工具 PATH，并提供 Node + 绝对脚本路径作为备用入口；平台在助手 home 下安装包装命令（`/home/assistant/.local/bin/wxbot`）和专属 Skill（`/home/assistant/.agents/skills/wxbot-send`）。Skill 位于受保护的 `.codex` 凭据目录之外。不修改全局 Codex 配置或技能。
 

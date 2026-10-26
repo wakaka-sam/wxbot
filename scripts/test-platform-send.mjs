@@ -26,13 +26,18 @@ try {
     const result = await command(['/home/assistant/.local/bin/wxbot', 'send', '--turn', turn, 'SYNTHETIC-SEND-731']);
     assert.equal(result.exitCode, 0, result.stderr + result.stdout);
     assert.equal(JSON.parse(result.stdout).status, 'sent');
+    const prepared=await command(['/bin/sh','-c','printf "SANDBOX-ATTACHMENT-731" > /workspace/result.txt']);
+    assert.equal(prepared.exitCode,0,prepared.stderr);
+    const media=await command(['/home/assistant/.local/bin/wxbot','send','--turn',turn,'--file','/workspace/result.txt']);
+    assert.equal(media.exitCode,0,media.stderr+media.stdout);
+    assert.equal(JSON.parse(media.stdout).status,'sent');
     const stale = await command(['/home/assistant/.local/bin/wxbot', 'send', '--turn', '00000000-0000-0000-0000-000000000000', 'must fail']);
     assert.notEqual(stale.exitCode, 0);
     const denied = await command(['/home/assistant/.local/bin/wxbot', 'send', '--turn', turn, '--profile', 'other', 'must fail']);
     assert.notEqual(denied.exitCode, 0);
     return { text: 'synthetic test complete' };
   };
-  await harness.run({ text: 'synthetic', onEvent() {}, onSend: async r => { sent.push(r.text); return { status: 'sent', id: r.requestId }; } });
-  assert.deepEqual(sent, ['SYNTHETIC-SEND-731']);
-  console.log(JSON.stringify({ sandboxSend: 'passed', staleTurn: 'rejected', otherProfile: 'rejected', realWechatSends: 0 }));
+  await harness.run({ text: 'synthetic', onEvent() {}, onSend: async r => { sent.push(r.attachment?{name:r.attachment.name,bytes:Buffer.from(r.attachment.data,'base64').toString()}:r.text); return { status: 'sent', id: r.requestId }; } });
+  assert.deepEqual(sent, ['SYNTHETIC-SEND-731',{name:'result.txt',bytes:'SANDBOX-ATTACHMENT-731'}]);
+  console.log(JSON.stringify({ sandboxSend: 'passed',sandboxFileSend:'passed', staleTurn: 'rejected', otherProfile: 'rejected', realWechatSends: 0 }));
 } finally { await harness.close(); await rm(dir, { recursive: true, force: true }); }

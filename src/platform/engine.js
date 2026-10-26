@@ -6,7 +6,7 @@ import { AppError } from './store.js';
 import { WechatChannel } from './adapters/wechat.js';
 import { CodexHarness } from './adapters/codex.js';
 import { normalizeAttachments, prepareAttachments } from './attachments.js';
-import { validateText } from '../send-client.js';
+import { validateSend, sendHash } from '../send-client.js';
 const uuidFor=value=>{const h=createHash('sha256').update(value).digest('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;};
 export class Engine extends EventEmitter {
   constructor(store,dir,{channelFactory=o=>new WechatChannel(o),harnessFactory=o=>new CodexHarness(o)}={}){
@@ -87,8 +87,11 @@ export class Engine extends EventEmitter {
     for(const delivery of this.textDeliveries(id,text,key))this.store.queueDelivery(delivery.id,id,delivery.payload);
     this.deliver(id);
   }
-  async sendFromTool(id,run,binding,{requestId,text}){
-    validateText(text);
+  async sendFromTool(id,run,binding,request){
+    return this.lock(`send:${id}`,()=>this.sendToolPayload(id,run,binding,request));
+  }
+  async sendToolPayload(id,run,binding,{requestId,text,attachment}){
+    validateSend(text,attachment);
     const r=this.runtimes.get(id);
     if(this.closed||r?.active!==run||run.interrupted)throw new AppError(409,'发送轮次已结束');
     this.requireActive(id);
@@ -97,10 +100,19 @@ export class Engine extends EventEmitter {
     const deliveryId=uuidFor(`wxbot-send:${id}:${run.jobId}:${requestId}`);
     const payload={text,binding:{accountId:binding.id,userId:binding.userId}};
     const prior=this.store.delivery(deliveryId);
-    if(prior&&JSON.stringify(JSON.parse(prior.payload))!==JSON.stringify(payload))throw new AppError(409,'同一 request-id 不能修改正文或接收账号');
+    const contentHash=attachment?sendHash(text,attachment):null;
+    const previous=prior?JSON.parse(prior.payload):null;
+    if(prior&&(attachment?previous.contentHash!==contentHash||JSON.stringify(previous.binding)!==JSON.stringify(payload.binding):JSON.stringify(previous)!==JSON.stringify(payload)))throw new AppError(409,'同一 request-id 不能修改正文、附件或接收账号');
     if(!prior){
+      if(attachment){
+        payload.attachment=await r.channel.stageAttachment(attachment);payload.contentHash=contentHash;
+        if(this.closed||r.active!==run||run.interrupted)throw new AppError(409,'发送轮次已结束');
+        this.requireActive(id);
+        const latest=r.channel.snapshot().account;
+        if(latest?.id!==binding.id||latest?.userId!==binding.userId)throw new AppError(409,'本轮微信绑定已失效');
+      }
       const message=this.store.tx(()=>{
-        const m=this.store.addMessage(id,{id:deliveryId,role:'assistant',text,source:'wxbot-send',jobId:run.jobId});
+        const m=this.store.addMessage(id,{id:deliveryId,role:'assistant',text,source:'wxbot-send',jobId:run.jobId,attachments:payload.attachment?[payload.attachment]:[]});
         this.store.queueDelivery(deliveryId,id,payload);return m;
       });
       this.publish(id,'message',message);
@@ -114,7 +126,7 @@ export class Engine extends EventEmitter {
       await r.delivering;
     }while(!this.closed&&!run.interrupted&&this.store.assistant(id)?.active&&r.blockedQuotaEpoch==null&&['pending','sending'].includes(this.store.delivery(deliveryId).state));
     const receipt=this.store.delivery(deliveryId);
-    if(receipt.state!=='failed')run.explicitTexts.add(text.trim());
+    if(receipt.state!=='failed'&&text.trim())run.explicitTexts.add(text.trim());
     const unresolved=['pending','sending'].includes(receipt.state);
     return {id:deliveryId,status:unresolved?'unknown':receipt.state,error:receipt.error||(unresolved?
       (r.blockedQuotaEpoch!=null?'消息已入队等待微信回复额度；请让用户在微信发送消息后继续，不要换 request-id 重发':'消息已入队，尚未确认微信接收；请先核实，不要换 request-id 重发'):null)};
@@ -129,9 +141,9 @@ export class Engine extends EventEmitter {
       for(const row of this.store.deliveries(id)){
         if(this.closed||!this.store.assistant(id)?.active)break;
         const p=JSON.parse(row.payload);
-        if(p.text.trim()==='正在执行命令…'){this.store.deliveryState(row.id,'skipped');continue;}
+        if(!p.attachment&&p.text.trim()==='正在执行命令…'){this.store.deliveryState(row.id,'skipped');continue;}
         this.store.deliveryState(row.id,'sending');
-        try{const result=await r.channel.send(p.text,row.id,p.binding);
+        try{const result=p.attachment?await r.channel.sendAttachment(p.attachment,row.id,p.binding):await r.channel.send(p.text,row.id,p.binding);
           if(result.status==='blocked'){
             this.store.deliveryState(row.id,'pending',result.error);
             r.blockedQuotaEpoch=result.budgetEpoch??r.channel.snapshot().replyBudget?.epoch??0;

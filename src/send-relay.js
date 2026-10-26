@@ -2,7 +2,7 @@ import { mkdir, open, readdir, writeFile, rename, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { UUID, sendHash, validateText } from './send-client.js';
+import { UUID, sendHash, validateSend, RELAY_LIMIT } from './send-client.js';
 
 // One directory and callback per active turn. No caller-controlled recipient,
 // profile, URL or host file path crosses this boundary.
@@ -18,16 +18,16 @@ export async function createSendRelay(root, onSend) {
       if (!UUID.test(id) || !UUID.test(attempt || '') || extra.length) continue;
       let file, response;
       try {
-        file = await open(join(dir, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+        file = await open(join(dir, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         const info = await file.stat();
-        if (!info.isFile() || info.size > 32768) throw new Error('发送请求过大或不是普通文件');
-        const bytes = Buffer.alloc(32769);
-        const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-        if (bytesRead > 32768) throw new Error('发送请求过大');
+        if (!info.isFile() || info.size > RELAY_LIMIT) throw new Error('发送请求过大或不是普通文件');
+        const bytes = Buffer.alloc(info.size+1);let bytesRead=0;
+        while(bytesRead<bytes.length){const part=await file.read(bytes,bytesRead,bytes.length-bytesRead,null);if(!part.bytesRead)break;bytesRead+=part.bytesRead;}
+        if (bytesRead !== info.size) throw new Error('发送请求在读取时发生变化');
         const request = JSON.parse(bytes.subarray(0, bytesRead).toString());
-        if (request.turn !== turn || request.requestId !== id || Object.keys(request).some(k => !['turn', 'requestId', 'text'].includes(k))) throw new Error('发送上下文无效');
-        validateText(request.text);
-        const hash = sendHash(request.text), prior = completed.get(id);
+        if (request.turn !== turn || request.requestId !== id || Object.keys(request).some(k => !['turn', 'requestId', 'text','attachment'].includes(k))) throw new Error('发送上下文无效');
+        validateSend(request.text,request.attachment);
+        const hash = sendHash(request.text,request.attachment), prior = completed.get(id);
         if (prior && prior.hash !== hash) throw new Error('同一 request-id 不能修改正文');
         if (!prior && completed.size >= 100) throw new Error('每轮最多主动发送 100 条消息');
         response = prior && ['sent', 'failed'].includes(prior.delivery.status)

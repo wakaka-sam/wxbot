@@ -99,6 +99,8 @@ npm start
 ```bash
 wxbot send '任务完成'
 wxbot send --profile <连接ID> --content-file /path/message.txt
+wxbot send --image /path/chart.png
+wxbot send --file /path/report.pdf
 wxbot send --server http://127.0.0.1:3210 <<'EOF'
 第一行
 第二行
@@ -110,6 +112,8 @@ EOF
 命令输出 JSON，包含 `requestId`、`id`、`status` 和可能的 `error`。只有 `sent` 返回退出码 0，表示微信接口接受请求；`unknown` 返回 2，其他失败返回 1。结果不明时先检查微信；可用相同 `--request-id <UUID>` 和完全相同正文再次获取回执，不能换标识盲目重发。连接切换或重新绑定后不要重试旧请求。
 
 两种模式的 Codex 会话都可主动发送：平台在助手自己的目录安装 `wxbot-send` Skill 和 `wxbot` 包装命令，本机模式通过开发者指令和 PATH 提供命令。每轮输入提供 `wxbot send --turn <本轮UUID>`；宿主只向这一轮绑定的微信用户代发，轮次结束后标识失效。该通道不需要助手访问宿主 HTTP 或持有微信凭证。平台发送同时保存到网页历史与 SQLite outbox；完全相同的最终回复不会再次发往微信，其他最终回复仍自动发送。平台最终答案等完整消息完成后投递，公开进度仍可分段发送，网页继续实时显示增量。
+
+支持 `wxbot send --turn <本轮UUID> --image /workspace/chart.png` 或 `--file /workspace/report.pdf` 发送真实附件。每次一张图片或一个文件，非空且最多 20 MB；图片支持 PNG/JPEG/GIF/WebP，其他格式用 `--file`，说明文字另发。附件会持久化到平台历史，图片可预览、文件可下载；超过微信回复额度时保留排队，原工作文件删除或服务重启后仍可续发。若最后一个额度轮到附件，先用第 10 条发送文字提醒，附件等待下一条微信输入。
 
 详见 [Codex 交互与发送通道](docs/CODEX-INTEGRATION.md)。
 

@@ -3,12 +3,15 @@ import { parseArgs, readText, sendText } from './send-client.js';
 
 const HELP = `wxbot send [正文] [--profile ID] [--server http://127.0.0.1:3210]
 wxbot send --content-file /path/message.txt
+wxbot send --image /workspace/chart.png
+wxbot send --file /workspace/report.pdf
 printf '消息内容' | wxbot send
 
 --request-id UUID  使用原标识查询/重试同一正文，避免重复发送
 --turn UUID        助手沙箱内使用本轮提供的标识，宿主固定接收账号
 
-首版发送文字（最多 4000 字符），正文保持换行。人工发送需要运行本机消息台。
+每次发送一条文字（最多 4000 字符）、一张图片或一个文件（最多 20 MB）。说明文字另发。
+图片支持 PNG/JPEG/GIF/WebP；其他格式使用 --file。人工发送需要运行本机消息台。
 输出 JSON 回执；仅 status=sent 时退出码为 0，unknown 时先在微信核实。
 `;
 
