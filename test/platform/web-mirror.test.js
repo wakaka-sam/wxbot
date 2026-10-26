@@ -16,12 +16,13 @@ test('网页输入带 [User]: 同步到对应微信，先于本轮回复且重�
  const f=await fixture();try{
   const c=await register(f),{id,channel}=await bound(f,c);
   const bob=await register(f,'bob');await bound(f,bob,'另一个用户',{id:'bob-bot',userId:'bob-user'});
-  const body={text:'帮我整理计划\n保留两行内容。',requestId:randomUUID()};
+  const body={text:'帮我整理计划\n\n保留空行。\r\n\r\n第三段。',requestId:randomUUID()};
   const result=await c.request(`/api/assistants/${id}/messages`,body);assert.equal(result.status,202);
   await until(()=>f.fake.runs.length===1&&!f.app.engine.runtimes.get(id).active&&!f.app.engine.runtimes.get(id).delivering);
   assert.equal(f.fake.runs[0].text,body.text);
   const sent=f.fake.sent.filter(s=>s.dir===channel.options.dir);
   assert.equal(sent[1].text,'[User]: '+body.text);assert.match(sent[2].text,/先确认/);
+  assert.deepEqual(sent.slice(3).map(s=>s.text),['回答：'+body.text]);
   assert.ok(sent.slice(1).every(s=>s.binding.accountId==='mirror-bot'&&s.binding.userId==='mirror-user'));
   assert.ok(!f.fake.sent.some(s=>s.binding.accountId==='bob-bot'&&s.text.includes(body.text)));
   const retry=await c.request(`/api/assistants/${id}/messages`,body);assert.equal(retry.data.duplicate,true);

@@ -170,16 +170,14 @@ export class Engine extends EventEmitter {
       const job=selected[0];for(const j of selected)this.store.jobState(j.id,'running');
       const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id,activities:new Set(),explicitTexts:new Set()};this.publish(id,'assistant',this.snapshot(id));
       const sendBinding=r.channel.snapshot().account;
-      const paragraph=(item,complete=false)=>{
-        // Final text waits for completion so an explicit send in this turn can
-        // suppress the identical automatic reply. Web deltas remain immediate.
-        if(item.phase!=='commentary'&&!complete)return;
+      const sendMessage=(item,complete=false)=>{
+        // Keep blank lines inside a single completed message. textDeliveries
+        // alone handles size limits; web deltas remain immediate. Waiting also
+        // lets an explicit send suppress the identical automatic reply.
+        if(!complete)return;
         if(run.explicitTexts.has(item.text.trim())){item.sent=item.text.length;return;}
-        while(item.text.length>item.sent){
-          const remainder=item.text.slice(item.sent);let length=0;
-          const boundary=remainder.indexOf('\n\n');
-          if(boundary>=0)length=boundary+2;else if(remainder.length>=1000)length=Array.from(remainder).slice(0,800).join('').length;else if(complete)length=remainder.length;else break;
-          const chunk=remainder.slice(0,length);this.enqueueText(id,chunk,`${item.id}:${item.sent}`);item.sent+=length;
+        if(item.text.length>item.sent){
+          this.enqueueText(id,item.text.slice(item.sent),`${item.id}:${item.sent}`);item.sent=item.text.length;
         }
       };
       try{
@@ -208,13 +206,13 @@ export class Engine extends EventEmitter {
           item.phase=event.phase||item.phase;
           item.text=event.type==='delta'?item.text+event.delta:event.text;
           const message=this.store.updateMessage(item.id,item.text,event.type==='message'?'complete':'streaming');
-          this.publish(id,'message',message);paragraph(item,event.type==='message');
+          this.publish(id,'message',message);sendMessage(item,event.type==='message');
         }});
-        await task;for(const item of run.items.values()){paragraph(item,true);this.publish(id,'message',this.store.updateMessage(item.id,item.text,'complete'));}
+        await task;for(const item of run.items.values()){sendMessage(item,true);this.publish(id,'message',this.store.updateMessage(item.id,item.text,'complete'));}
         for(const j of selected)this.store.jobState(j.id,'done');
       }catch(error){
         const interrupted=run.interrupted||this.closed||error.code==='interrupted';
-        for(const item of run.items.values()){paragraph(item,true);this.publish(id,'message',this.store.updateMessage(item.id,item.text,interrupted?'interrupted':'error'));}
+        for(const item of run.items.values()){sendMessage(item,true);this.publish(id,'message',this.store.updateMessage(item.id,item.text,interrupted?'interrupted':'error'));}
         const requeue=run.superseded&&!run.submitted&&!this.closed&&this.store.assistant(id)?.active;
         for(const j of selected)this.store.jobState(j.id,requeue?'pending':interrupted?'interrupted':'failed');
         if(!interrupted){const m=this.store.addMessage(id,{role:'system',kind:'status',text:`执行失败：${error.message}`,state:'error'});this.publish(id,'message',m);this.enqueueText(id,m.text,`error:${m.id}`);await r.harness.close();}
