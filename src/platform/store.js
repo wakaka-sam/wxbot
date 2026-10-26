@@ -98,7 +98,6 @@ export class PlatformStore {
   cancelPending(id){this.db.prepare("UPDATE jobs SET state='cancelled' WHERE assistant_id=? AND state='pending'").run(id);}
   recover(){this.db.prepare("UPDATE jobs SET state='interrupted' WHERE state='running'").run();this.db.prepare("UPDATE messages SET state='interrupted' WHERE state='streaming'").run();this.db.prepare("UPDATE outbox SET state='unknown',error='服务重启，发送结果待确认' WHERE state='sending'").run();}
   queueDelivery(id,a,payload){this.db.prepare('INSERT OR IGNORE INTO outbox(id,assistant_id,payload,state,created_at) VALUES(?,?,?,?,?)').run(id,a,JSON.stringify(payload),'pending',now());}
-  delivery(id){return this.db.prepare('SELECT * FROM outbox WHERE id=?').get(id);}
   deliveries(a){return this.db.prepare("SELECT * FROM outbox WHERE assistant_id=? AND state='pending' ORDER BY seq").all(a);}
   deliveryState(id,state,error=null){this.db.prepare('UPDATE outbox SET state=?,error=? WHERE id=?').run(state,error,id);}
   deliveryErrors(a){return this.db.prepare("SELECT id,state,error,created_at FROM outbox WHERE assistant_id=? AND state IN ('failed','unknown') ORDER BY seq DESC LIMIT 10").all(a);}

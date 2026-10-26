@@ -90,7 +90,7 @@ export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || 
           case '/api/login': await bridge.login(); break;
           case '/api/verify': bridge.verify(body.code); break;
           case '/api/send': {
-            const delivery = await bridge.send(body.text, body.requestId, { accountId: body.accountId, userId: body.userId });
+            const delivery = await bridge.send(body.text, body.requestId, { accountId: body.accountId });
             return send(200, { ...snapshot(), delivery });
           }
           case '/api/pause': bridge.pause(); break;

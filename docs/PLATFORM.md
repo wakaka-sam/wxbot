@@ -98,13 +98,11 @@ Channel 是 EventEmitter，接受 `{dir, validateBinding}`，实现：
 Harness 接受 `{dir}`，实现：
 
 - `prepare({threadId,onThread})`：创建/恢复，持久 thread ID 通过回调保存。
-- `run({text,images,onEvent,onSend})`：images 为可选的 `{id,name,mime,bytes}` 数组，不依赖渠道文件路径。只执行一个轮次，输出公开事件；完成 resolve，被中断 reject 且 `error.code='interrupted'`。可选 `onSend({requestId,text})` 回调由 Engine 绑定助手、轮次及微信身份，返回发送回执；Codex 的 `wxbot send` 通过按轮次隔离的文件通道调用它，不能指定其他接收者。
+- `run({text,images,onEvent})`：images 为可选的 `{id,name,mime,bytes}` 数组，不依赖渠道文件路径。只执行一个轮次，输出公开事件；完成 resolve，被中断 reject 且 `error.code='interrupted'`。
 - `interrupt()/close()`：中断当前轮次/释放进程。
 - 事件 `started:{turnId}`、`delta:{itemId,delta,phase}`、`message:{itemId,text,phase}`；phase 区分 `commentary` 与 `final_answer`，不发布内部 reasoning。
 
 接新聊天机器人只需实现 Channel；换 AI harness 只需实现 Harness。两者通过 Engine 的标准事件连接，不应互相调用。协议依据 [Codex app-server 官方文档](https://learn.chatgpt.com/docs/app-server)，具体可用字段以固定版本 CLI schema 为准。
-
-`wxbot send` 的安装、回执、幂等和最终回复去重见 [Codex 交互与发送通道](CODEX-INTEGRATION.md)。公开进度继续分段同步；最终正文等完整消息完成后投递，以便与本轮显式发送的正文比较，网页增量保持实时。
 
 ## 实际能力验收
 
