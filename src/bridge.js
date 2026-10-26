@@ -6,9 +6,9 @@ import { trustedBase } from './weixin.js';
 import { downloadMedia, describeMedia, saveMedia } from './media.js';
 
 export class Bridge extends EventEmitter {
-  constructor(store, api, dir, { media = downloadMedia, pollDelay = 300, retryDelay = 2000, validateAccount = () => {} } = {}) {
+  constructor(store, api, dir, { media = downloadMedia, pollDelay = 300, retryDelay = 2000, validateAccount = () => {}, replyLimit = 0 } = {}) {
     super();
-    Object.assign(this, { store, api, dir, media, pollDelay, retryDelay, validateAccount });
+    Object.assign(this, { store, api, dir, media, pollDelay, retryDelay, validateAccount, replyLimit });
     this.state = { phase: 'offline', detail: '扫码连接微信，开始接收消息', qr: null, lastReceived: null };
     this.jobs = new Set();
   }
@@ -166,7 +166,12 @@ export class Bridge extends EventEmitter {
     const message = { id, direction: 'outbound', sender: '本机', recipient: account.userId,
       receivedAt: new Date().toISOString(), text, quotes: [], attachments: [], status: 'sending', source: expected.source || 'local' };
     // Reserve the receipt before the first await so simultaneous retries cannot send twice.
-    this.store.beginSend(message, digest);
+    const reserved = this.store.beginSend(message, digest, this.replyLimit ? {
+      account, limit: this.replyLimit,
+      notice: `\n\n【回复提醒】这是本轮第 ${this.replyLimit} 条消息，已达到微信连续回复上限。请在微信里再发一条消息（例如“继续”），才能接收后续回复；完整内容也可在网页查看。`,
+    } : null);
+    if (!reserved) return { id, status: 'blocked', budgetEpoch: this.store.replyBudget(account, this.replyLimit).epoch,
+      error: '微信回复额度已用完，请在微信里再发一条消息后继续' };
     this.emit('change');
     let status = 'sent', error = null, submitted = false;
     try {
@@ -182,7 +187,7 @@ export class Bridge extends EventEmitter {
       submitted = true;
       if (item) await this.api.sendItem(account, item, `clawbot-local-${requestId}`,
         this.store.get(`context:${account.id}:${account.userId}`));
-      else await this.api.sendText(account, text, `clawbot-local-${requestId}`,
+      else await this.api.sendText(account, message.text, `clawbot-local-${requestId}`,
         this.store.get(`context:${account.id}:${account.userId}`));
     } catch (cause) {
       if (!submitted && typeof cause.code !== 'number') {

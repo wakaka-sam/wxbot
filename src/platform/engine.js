@@ -112,24 +112,37 @@ export class Engine extends EventEmitter {
       this.deliver(id);
       if(!r.delivering)break;
       await r.delivering;
-    }while(!this.closed&&!run.interrupted&&this.store.assistant(id)?.active&&['pending','sending'].includes(this.store.delivery(deliveryId).state));
+    }while(!this.closed&&!run.interrupted&&this.store.assistant(id)?.active&&r.blockedQuotaEpoch==null&&['pending','sending'].includes(this.store.delivery(deliveryId).state));
     const receipt=this.store.delivery(deliveryId);
     if(receipt.state!=='failed')run.explicitTexts.add(text.trim());
     const unresolved=['pending','sending'].includes(receipt.state);
-    return {id:deliveryId,status:unresolved?'unknown':receipt.state,error:receipt.error||(unresolved?'消息已入队，尚未确认微信接收；请先核实，不要换 request-id 重发':null)};
+    return {id:deliveryId,status:unresolved?'unknown':receipt.state,error:receipt.error||(unresolved?
+      (r.blockedQuotaEpoch!=null?'消息已入队等待微信回复额度；请让用户在微信发送消息后继续，不要换 request-id 重发':'消息已入队，尚未确认微信接收；请先核实，不要换 request-id 重发'):null)};
   }
   deliver(id){
     const r=this.runtimes.get(id);if(!r||r.delivering||this.closed||!this.store.assistant(id)?.active)return;
     if(!['connected','connecting','reconnecting'].includes(r.channel.snapshot().phase))return;
-    r.delivering=(async()=>{
+    if(r.blockedQuotaEpoch!=null&&r.blockedQuotaEpoch===r.channel.snapshot().replyBudget?.epoch)return;
+    r.blockedQuotaEpoch=null;
+    // Install the drain guard before send() can synchronously emit channel state.
+    r.delivering=Promise.resolve().then(async()=>{
       for(const row of this.store.deliveries(id)){
         if(this.closed||!this.store.assistant(id)?.active)break;
-        const p=JSON.parse(row.payload);this.store.deliveryState(row.id,'sending');
-        try{const result=await r.channel.send(p.text,row.id,p.binding);this.store.deliveryState(row.id,result.status==='sent'?'sent':result.status==='unknown'?'unknown':'failed',result.error||null);}
+        const p=JSON.parse(row.payload);
+        if(p.text.trim()==='正在执行命令…'){this.store.deliveryState(row.id,'skipped');continue;}
+        this.store.deliveryState(row.id,'sending');
+        try{const result=await r.channel.send(p.text,row.id,p.binding);
+          if(result.status==='blocked'){
+            this.store.deliveryState(row.id,'pending',result.error);
+            r.blockedQuotaEpoch=result.budgetEpoch??r.channel.snapshot().replyBudget?.epoch??0;
+            this.publish(id,'delivery',{id:row.id});break;
+          }
+          this.store.deliveryState(row.id,result.status==='sent'?'sent':result.status==='unknown'?'unknown':'failed',result.error||null);}
         catch(error){this.store.deliveryState(row.id,'failed',error.message);}
         this.publish(id,'delivery',{id:row.id});
       }
-    })().finally(()=>{r.delivering=null;if(!this.closed&&this.store.assistant(id)?.active&&this.store.deliveries(id).length)queueMicrotask(()=>this.deliver(id));});r.delivering.catch(()=>{});
+    }).finally(()=>{r.delivering=null;if(!this.closed&&this.store.assistant(id)?.active&&this.store.deliveries(id).length&&
+      (r.blockedQuotaEpoch==null||r.blockedQuotaEpoch!==r.channel.snapshot().replyBudget?.epoch))queueMicrotask(()=>this.deliver(id));});r.delivering.catch(()=>{});
   }
   wake(id){
     if(this.closed||!this.store.assistant(id)?.active)return;
@@ -175,7 +188,7 @@ export class Engine extends EventEmitter {
           if(event.type==='activity'){
             if(run.activities.has(event.itemId))return;run.activities.add(event.itemId);
             const m=this.store.addMessage(id,{role:'assistant',kind:'progress',text:event.text,source:'harness',jobId:job.id});
-            this.publish(id,'message',m);this.enqueueText(id,m.text,`activity:${m.id}`);return;
+            this.publish(id,'message',m);if(event.activityType!=='commandExecution'&&m.text.trim()!=='正在执行命令…')this.enqueueText(id,m.text,`activity:${m.id}`);return;
           }
           if(!['delta','message'].includes(event.type))return;
           let item=run.items.get(event.itemId);

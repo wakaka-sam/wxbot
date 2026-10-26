@@ -19,6 +19,7 @@ test('工具活动持久化并同步微信，相同活动事件不重复发送',
   const r=f.app.engine.runtimes.get(id);await r.channel.pair();
   r.harness.run=async({onEvent})=>{
    onEvent({type:'activity',itemId:'search-1',text:'正在查询网页…'});
+   onEvent({type:'activity',itemId:'command-1',activityType:'commandExecution',text:'正在执行命令…'});
    onEvent({type:'activity',itemId:'search-1',text:'正在查询网页…'});
    onEvent({type:'message',itemId:'answer-1',text:'查询完成',phase:'final_answer'});
    return{text:'查询完成'};
@@ -27,5 +28,7 @@ test('工具活动持久化并同步微信，相同活动事件不重复发送',
   assert.equal(f.app.store.messages(id).filter(m=>m.text==='正在查询网页…').length,1);
   await until(()=>f.fake.sent.some(m=>m.text==='查询完成'));
   assert.equal(f.fake.sent.filter(m=>m.text==='正在查询网页…').length,1);
+  assert.equal(f.app.store.messages(id).filter(m=>m.text==='正在执行命令…').length,1);
+  assert.equal(f.fake.sent.filter(m=>m.text==='正在执行命令…').length,0);
  }finally{await f.close();}
 });

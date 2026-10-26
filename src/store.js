@@ -80,12 +80,33 @@ export class Store {
     }
   }
   receipt(id) { return this.db.prepare('SELECT * FROM send_receipts WHERE id=?').get(id); }
-  beginSend(message, hash) {
+  replyBudget(account, limit) {
+    const prefix = `${account.id}:`;
+    const epoch = this.db.prepare(`SELECT COALESCE(MAX(seq),0) n FROM messages
+      WHERE substr(id,1,length(?))=? AND json_extract(payload,'$.sender')=?
+      AND COALESCE(json_extract(payload,'$.direction'),'inbound')!='outbound'`)
+      .get(prefix, prefix, account.userId).n;
+    const key = `reply-budget:${account.id}:${account.userId}`, saved = this.get(key);
+    // Bootstrap existing installations from receipts after the latest real input.
+    const outbound = `out:${account.id}:`;
+    const used = saved?.epoch === epoch ? saved.used : this.db.prepare(`SELECT COUNT(*) n FROM messages
+      WHERE seq>? AND substr(id,1,length(?))=? AND json_extract(payload,'$.recipient')=?`)
+      .get(epoch, outbound, outbound, account.userId).n;
+    return { key, epoch, used, limit, remaining: Math.max(0, limit - used) };
+  }
+  beginSend(message, hash, quota) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      if (quota) {
+        const budget = this.replyBudget(quota.account, quota.limit);
+        if (!budget.remaining) { this.db.exec('ROLLBACK'); return false; }
+        if (budget.remaining === 1) message.text += quota.notice;
+        this.set(budget.key, { epoch: budget.epoch, used: budget.used + 1 });
+      }
       this.db.prepare('INSERT INTO send_receipts (id,hash,status) VALUES (?,?,?)').run(message.id, hash, 'sending');
       this.db.prepare('INSERT INTO messages (id,payload) VALUES (?,?)').run(message.id, JSON.stringify(message));
       this.db.exec('COMMIT');
+      return true;
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   setSendAttachments(id, attachments) {
