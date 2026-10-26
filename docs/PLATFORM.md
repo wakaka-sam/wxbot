@@ -47,6 +47,7 @@ npm install --prefix /root/.local/share/wxbot-platform-tools @openai/codex@0.163
 npm install --prefix /opt/wxbot-agent-tools playwright
 PLAYWRIGHT_BROWSERS_PATH=/opt/wxbot-agent-tools/browsers /opt/wxbot-agent-tools/node_modules/.bin/playwright install chromium
 # 使用部署方既有 Codex 登录，PLATFORM_CODEX_AUTH 指向 auth.json。
+# 若平台使用独立副本，可设 PLATFORM_CODEX_AUTH_SOURCE 指向同账号持续维护的登录文件。
 cp deploy/platform.env.example /etc/wxbot-platform.env
 chmod 600 /etc/wxbot-platform.env
 # 编辑 env：替换初始化密码、路径、当前账号可用的模型。
@@ -71,6 +72,8 @@ ssh -N -L 3211:127.0.0.1:3211 root@YOUR_SERVER
 允许从飞书等外站链接打开公开首页及静态资源（仅 GET）；这些响应不含账号和会话数据。接口（含历史、附件和 SSE）及写操作仍执行 Origin/Fetch Metadata 校验，所有请求仍检查 Host，页面禁止被 iframe 嵌入。
 
 数据：`PLATFORM_DATA_DIR/platform.sqlite` 为用户、助手、消息、任务与投递表；`assistants/<id>/channel` 保存微信消息和凭证；`assistants/<id>/harness/home/.codex` 保存 Codex 授权及 thread 文件。数据库和 thread 文件应一起备份。备份前停止新平台服务，复制整个数据目录后重新启动，旧 3210 服务不受影响。凭证和备份均需仅部署账户可读，不提交 Git。
+
+模型鉴权：每次启动或复用执行器前，比较配置的登录文件、助手缓存和可选 `PLATFORM_CODEX_AUTH_SOURCE`。仅在账号相同且访问令牌过期时间更新时同步，用原子写入保留新凭据，避免旧副本覆盖 CLI 更新后的登录。凭据变化时重建执行器并恢复原 thread，不自动重跑失败任务。已知令牌全部过期时明确提示管理员更新 Codex 登录。该机制同步已有凭据，不执行 OAuth 自动续期，也不会自动切换模型账号；部署方仍需维护来源登录有效性。鉴权失败无需删除微信绑定或对话历史。
 
 进程正常停止会中断执行中的轮次并保留上下文。崩溃恢复将 running job 和 streaming 消息标为 interrupted；pending job 继续执行，已运行的任务不自动重放。投递状态未知时不自动重发，避免重复通知。页面显示微信投递异常，完整输出仍保存在网页。此版本未提供失败投递手动重试界面。
 

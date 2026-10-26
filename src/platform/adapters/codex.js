@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import net from 'node:net';
@@ -9,6 +9,7 @@ import { agentConfig } from './codex-policy.js';
 import { CodexClient } from '../../codex-client.js';
 import { createSendRelay } from '../../send-relay.js';
 import { installSendTools, SEND_INSTRUCTIONS } from '../../send-tools.js';
+import { syncCodexAuth } from './codex-auth.js';
 const exec=promisify(execFile);
 
 const INSTRUCTIONS=`你是用户创建的私人助手。网页与微信共用同一会话，直接用中文帮助用户。
@@ -24,17 +25,19 @@ const INSTRUCTIONS=`你是用户创建的私人助手。网页与微信共用同
 // Harness contract: prepare({threadId,onThread}), run({text,onEvent}), interrupt(), close().
 // Events only contain public assistant content: delta/message/started. Never reasoning/tool stdout.
 export class CodexHarness {
-  constructor({dir,model=process.env.PLATFORM_MODEL||'gpt-6-astra',command=process.env.PLATFORM_CODEX_BIN||'/usr/bin/codex',authFile=process.env.PLATFORM_CODEX_AUTH||'/root/.codex/auth.json',isolated=true}){
-    Object.assign(this,{dir,model,command,authFile,isolated});this.client=null;this.threadId=null;this.interrupted=false;
+  constructor({dir,model=process.env.PLATFORM_MODEL||'gpt-6-astra',command=process.env.PLATFORM_CODEX_BIN||'/usr/bin/codex',authFile=process.env.PLATFORM_CODEX_AUTH||'/root/.codex/auth.json',authSource=process.env.PLATFORM_CODEX_AUTH_SOURCE,isolated=true}){
+    Object.assign(this,{dir,model,command,authFile,authSource,isolated});this.client=null;this.threadId=null;this.interrupted=false;
   }
   async prepare({threadId,onThread}){
     if(!this.isolated)throw new Error('启用工具的执行器必须使用隔离环境');
-    if(this.client&&!this.client.dead&&this.threadId===threadId)return;
-    await this.close();
     const home=join(this.dir,'home'),workspace=join(this.dir,'workspace');
     await mkdir(join(home,'.codex'),{recursive:true,mode:0o700});await mkdir(workspace,{recursive:true,mode:0o700});
+    const authVersion=await syncCodexAuth(this.authFile,join(home,'.codex','auth.json'),{sourceFile:this.authSource});
+    if(this.client&&!this.client.dead&&this.threadId===threadId&&this.authVersion===authVersion)return;
+    await this.close();
+    // A closing CLI may have persisted a refresh; reconcile once more before spawn.
+    this.authVersion=await syncCodexAuth(this.authFile,join(home,'.codex','auth.json'),{sourceFile:this.authSource});
     this.sendTools=await installSendTools(home,{visibleHome:'/home/assistant',node:process.execPath});
-    await writeFile(join(home,'.codex','auth.json'),await readFile(this.authFile),{mode:0o600});
     for(const path of ['.cache','.local','.npm'])await mkdir(join(home,path),{recursive:true,mode:0o700});
     // Each app-server owns a proxy listener; avoid a shared fixed port across assistants.
     const listener=net.createServer();await new Promise((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',resolve);});
