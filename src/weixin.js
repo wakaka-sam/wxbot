@@ -1,4 +1,5 @@
 import { randomBytes, createCipheriv, createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import JSONBig from 'json-bigint';
 
 const codec = JSONBig({ storeAsString: true, protoAction: 'ignore', constructorAction: 'ignore' });
@@ -14,11 +15,13 @@ export function trustedBase(value) {
 
 export class Weixin {
   constructor({ baseUrl = DEFAULT_BASE, fetchImpl = fetch, routeTag = process.env.WEIXIN_ROUTE_TAG,
-    onSendResult = event => console.info(JSON.stringify(event)) } = {}) {
+    onSendResult = event => console.info(JSON.stringify(event)),
+    onUploadResult = event => console.info(JSON.stringify(event)) } = {}) {
     this.baseUrl = baseUrl;
     this.fetch = fetchImpl;
     this.routeTag = routeTag;
     this.onSendResult = onSendResult;
+    this.onUploadResult = onUploadResult;
   }
   async request(base, path, { signal, token, body, timeout = 40000, allowEmpty = false } = {}) {
     const headers = { 'iLink-App-Id': 'bot', 'iLink-App-ClientVersion': '132106' };
@@ -95,13 +98,32 @@ export class Weixin {
       url.searchParams.set('filekey', filekey);
     }
     // Only encrypted bytes go to CDN; never forward the bot credential.
-    const response = await this.fetch(url, { method: 'POST', redirect: 'error',
-      headers: { 'Content-Type': 'application/octet-stream' }, body: encrypted,
-      signal: AbortSignal.timeout(60000) });
-    const param = response.headers.get('x-encrypted-param');
-    await response.body?.cancel();
-    if (!response.ok) throw new Error(`媒体上传失败（HTTP ${response.status}）`);
-    if (!param) throw new Error('微信 CDN 未返回媒体下载参数');
+    // Retry only the CDN upload, with identical ciphertext and filekey. Never retry
+    // sendmessage here: an ambiguous acknowledgement could duplicate a chat message.
+    let param;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      let status = null, failure;
+      const started = Date.now();
+      try {
+        const response = await this.fetch(url, { method: 'POST', redirect: 'error',
+          headers: { 'Content-Type': 'application/octet-stream' }, body: encrypted,
+          signal: AbortSignal.timeout(60000) });
+        status = response.status;
+        param = response.headers.get('x-encrypted-param')?.trim();
+        await response.body?.cancel().catch(() => {});
+        if (status !== 200) failure = new Error(`媒体上传失败（HTTP ${status}）`);
+        else if (!param) failure = new Error('微信 CDN 未返回媒体下载参数');
+      } catch {
+        failure = new Error('媒体上传网络异常或超时');
+      }
+      const retry = Boolean(failure) && attempt < 3 && !(status >= 400 && status < 500);
+      try { this.onUploadResult({ event: 'wechat.upload_result', attempt, status,
+        durationMs: Date.now() - started, outcome: failure ? (retry ? 'retrying' : 'failed') : 'uploaded' });
+      } catch { /* Diagnostics must not affect delivery. Never log upload URLs or keys. */ }
+      if (!failure) break;
+      if (!retry) throw failure;
+      await delay(250 * attempt);
+    }
     // Upstream serializes the hex string as base64, not the raw key bytes.
     const media = { encrypt_query_param: param, aes_key: Buffer.from(key.toString('hex')).toString('base64'), encrypt_type: 1 };
     if (attachment.kind === 'image') return { type: 2, image_item: { media, mid_size: encrypted.length } };

@@ -103,6 +103,74 @@ test('上传失败未发消息，提交后超时标为 unknown 且不重复发�
   } finally { await t.close(); }
 });
 
+test('CDN 瞬时失败最多上传三次，保持密文和地址不变，只提交一条消息', async () => {
+  const t = await setup();
+  try {
+    const original = t.h.api.fetch, uploads = [], events = [];
+    t.h.api.onUploadResult = event => events.push(event);
+    t.h.api.fetch = async (url, options) => {
+      if (url.hostname.endsWith('.cdn.weixin.qq.com')) {
+        uploads.push({ url: String(url), bytes: Buffer.from(options.body) });
+        if (uploads.length === 1) return new Response('private upstream detail', { status: 500 });
+        if (uploads.length === 2) throw new Error('private upload URL');
+      }
+      return original(url, options);
+    };
+    const id = randomUUID();
+    assert.equal((await t.send(png, 'a.png', 'auto', id)).data.delivery.status, 'sent');
+    assert.equal(uploads.length, 3);
+    assert.deepEqual(uploads[0], uploads[1]); assert.deepEqual(uploads[1], uploads[2]);
+    assert.deepEqual(events.map(e => e.outcome), ['retrying', 'retrying', 'uploaded']);
+    assert.equal(JSON.stringify(events).includes('private'), false);
+    assert.equal(t.h.items.length, 1);
+    assert.equal((await t.send(png, 'a.png', 'auto', id)).data.delivery.status, 'sent');
+    assert.equal(uploads.length, 3); assert.equal(t.h.items.length, 1);
+  } finally { await t.close(); }
+});
+
+test('CDN 永久失败重试有上限，4xx 立即失败，缺失下载参数不发送消息', async () => {
+  const t = await setup();
+  try {
+    const original = t.h.api.fetch;
+    for (const [status, expected] of [[500, 3], [403, 1], [200, 3]]) {
+      let attempts = 0;
+      t.h.api.fetch = async (url, options) => {
+        if (url.hostname.endsWith('.cdn.weixin.qq.com')) {
+          attempts++;
+          return new Response('', { status });
+        }
+        return original(url, options);
+      };
+      assert.equal((await t.send(png, 'a.png')).data.delivery.status, 'failed');
+      assert.equal(attempts, expected);
+      assert.equal(t.h.items.length, 0);
+    }
+  } finally { await t.close(); }
+});
+
+test('Codex 附件失败明确通知且恢复不重复；未知结果不宣称发送失败', async () => {
+  const t = await setup(() => ({}));
+  try {
+    await writeFile(join(t.root, 'answer.txt'), '产物');
+    const prepared = await prepareReply(`附件如下\n[[clawbot-send:${t.root}/answer.txt]]`, t.root, t.dir);
+    t.h.failUpload();
+    t.app.store.addCodexJob({ id: 'failed-file', scope: 'bot:owner', accountId: 'bot', userId: 'owner',
+      status: 'replying', ...prepared });
+    await t.app.codex.deliver(t.app.store.codexJob('failed-file'));
+    assert.equal(t.h.items.length, 2);
+    assert.match(t.h.items[1].text_item.text, /附件发送失败/);
+    assert.match(t.app.store.codexJob('failed-file').deliveryError, /附件/);
+    await t.app.codex.deliver(t.app.store.codexJob('failed-file'));
+    assert.equal(t.h.items.length, 2);
+    t.app.bridge.sendMedia = async () => ({ status: 'unknown', error: 'timeout after submission' });
+    t.app.store.addCodexJob({ id: 'unknown-file', scope: 'bot:owner', accountId: 'bot', userId: 'owner',
+      status: 'replying', ...prepared });
+    await t.app.codex.deliver(t.app.store.codexJob('unknown-file'));
+    assert.match(t.h.items.at(-1).text_item.text, /结果未能确认/);
+    assert.doesNotMatch(t.h.items.at(-1).text_item.text, /发送失败/);
+  } finally { await t.close(); }
+});
+
 test('输入状态续期、停止、失败降级以及账号变更不会串号', async () => {
   const t = await setup();
   try {

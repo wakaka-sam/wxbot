@@ -217,6 +217,7 @@ export class CodexManager {
     }
     if (!deliveryError) for (const [index, attachment] of (job.replyAttachments || []).entries()) {
       if (this.closed || this.scope() !== job.scope) return;
+      let uncertain = false;
       try {
         const hash = createHash('sha256').update(`codex-media:${job.id}:${index}`).digest('hex');
         const requestId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
@@ -224,8 +225,24 @@ export class CodexManager {
         const bytes = await readFile(join(this.dir, 'media', attachment.id));
         const result = await this.bridge.sendMedia(bytes, attachment.name, attachment.kind, requestId,
           { accountId: job.accountId, userId: job.userId, source: 'codex' });
-        if (result.status !== 'sent') throw new Error(result.error || '附件发送结果待确认');
-      } catch (error) { deliveryError = `附件 ${attachment.name}：${error.message}`; break; }
+        if (result.status !== 'sent') {
+          uncertain = result.status === 'unknown' || result.status === 'sending';
+          throw new Error(result.error || '附件发送结果待确认');
+        }
+      } catch (error) {
+        deliveryError = `附件 ${attachment.name}：${error.message}`;
+        if (this.closed || this.scope() !== job.scope) return;
+        const hash = createHash('sha256').update(`codex-media-notice:${job.id}:${index}`).digest('hex');
+        const requestId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+        const notice = uncertain
+          ? '附件发送结果未能确认，请检查是否收到；为避免重复发送，系统未自动重发。'
+          : '附件发送失败，文件未成功提交微信。请稍后再试；前面的文字回复不代表附件已送达。';
+        try {
+          await this.bridge.send(notice, requestId,
+            { accountId: job.accountId, userId: job.userId, source: 'codex' });
+        } catch { /* Preserve the original failure; the notice also has a durable receipt. */ }
+        break;
+      }
     }
     this.store.updateCodexJob(job.id, { status: job.outcome || 'completed', deliveryError,
       activity: deliveryError ? `回复未送达：${deliveryError}` : '回复已提交微信' });
