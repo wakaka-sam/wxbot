@@ -20,7 +20,7 @@ test('附件经 CLI、宿主、真实适配器落库：额度提醒后排队，�
  f.fake.options.channelFactory=factory;f.app.engine.channelFactory=factory;
  let relay;
  try{
-  const user=await register(f),id=await create(user);await user.request(`/api/assistants/${id}/activate`,{});
+  const user=await register(f),id=await create(user);
   let r=f.app.engine.runtimes.get(id);await until(()=>r.channel.snapshot().phase==='connected');
   for(let i=0;i<9;i++)f.app.engine.enqueueText(id,`before ${i}`,`before:${i}`);
   await until(()=>textSent.length===9&&!r.delivering);
@@ -58,7 +58,7 @@ test('上传失败链接持久排队并遵守微信额度，重启后发送一�
  const factory=options=>{const c=new WechatChannel({...options,api});if(!c.store.get('account'))c.store.set('account',account);return c;};
  f.fake.options.channelFactory=factory;f.app.engine.channelFactory=factory;f.app.downloads.publicUrl='https://download.test';
  try {
-  const user=await register(f),id=await create(user);await user.request(`/api/assistants/${id}/activate`,{});
+  const user=await register(f),id=await create(user);
   let r=f.app.engine.runtimes.get(id);await until(()=>r.channel.snapshot().phase==='connected');
   for(let i=0;i<8;i++)f.app.engine.enqueueText(id,`before ${i}`,`before:${i}`);
   await until(()=>sent.length===8&&!r.delivering);

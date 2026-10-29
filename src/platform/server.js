@@ -54,8 +54,8 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    if(!user)throw new AppError(401,'请先登录');
    if(path==='/api/password'&&req.method==='POST'){await auth.changePassword(user,body.oldPassword,body.newPassword);auth.issue(user,res);return send(200,{ok:true});}
    if(path==='/api/assistants'){
-    if(req.method==='GET')return send(200,{assistants:engine.list(user.id),activeLimit:3});
-    auth.rate(`create:${user.id}`,30,3600000);const a=store.createAssistant(user.id,body.name);await engine.runtime(a);return send(201,{assistant:engine.snapshot(a.id)});
+    if(req.method==='GET'){const a=store.assistants(user.id)[0];if(a&&!engine.runtimes.has(a.id))await engine.activate(a.id,user);return send(200,{assistants:engine.list(user.id),activeLimit:1});}
+    throw new AppError(409,'默认助手已创建，不支持新增助手','SINGLE_ASSISTANT');
    }
    if(path.startsWith('/api/admin/')){
     if(user.role!=='admin')throw new AppError(403,'需要管理员权限');
@@ -96,8 +96,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
     }
     throw new AppError(404,'接口不存在');
    }
-   if(action==='activate')return send(200,{assistant:await engine.activate(id,user,body.stopAssistantId)});
-   if(action==='deactivate')return send(200,{assistant:await engine.deactivate(id,user)});
+   if(action==='activate'||action==='deactivate')throw new AppError(410,'默认助手无需激活或停止，请使用微信连接管理');
    if(action==='rename'){store.rename(id,user,body.name);return send(200,{assistant:engine.snapshot(id)});}
    if(action==='messages'){auth.rate(`message:${user.id}`,120,60000);return send(202,engine.submit(id,body.text,'web',body.requestId));}
    if(action==='interrupt'){await engine.interrupt(id);return send(200,{assistant:engine.snapshot(id)});}

@@ -34,7 +34,7 @@ export function mocks(){
    onEvent({type:'started',turnId:'turn-'+count++});
    onEvent({type:'delta',itemId:'one',delta:'先确认你的问题。\n\n',phase:'commentary'});
    onEvent({type:'message',itemId:'one',text:'先确认你的问题。\n\n',phase:'commentary'});
-   if(text.includes('WAIT'))await held;else{resolve();await delay(20);await held;}
+   if(text.startsWith('WAIT'))await held;else{resolve();await delay(20);await held;}
    onEvent({type:'delta',itemId:'two',delta:'回答：'+text,phase:'final_answer'});
    onEvent({type:'message',itemId:'two',text:'回答：'+text,phase:'final_answer'});
    this.pending=null;return {text:'回答：'+text};
@@ -58,4 +58,4 @@ export async function fixture(){
  return ctx;
 }
 export async function register(ctx,name='alice'){const c=ctx.client();assert.equal((await c.request('/api/register',{username:name,password:'Test-password-731'})).status,201);return c;}
-export async function create(c,name='助手'){const r=await c.request('/api/assistants',{name});assert.equal(r.status,201);return r.data.assistant.id;}
+export async function create(c,name='助手'){const r=await c.request('/api/assistants');assert.equal(r.status,200);assert.equal(r.data.assistants.length,1);const id=r.data.assistants[0].id;await c.request(`/api/assistants/${id}/rename`,{name});return id;}

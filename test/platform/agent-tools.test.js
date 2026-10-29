@@ -15,7 +15,7 @@ test('工具进度只转发当前线程的公开活动，不包含命令或原�
 
 test('工具活动持久化并同步微信，相同活动事件不重复发送',async()=>{
  const f=await fixture();try{
-  const c=await register(f),id=await create(c);await c.request(`/api/assistants/${id}/activate`,{});
+  const c=await register(f),id=await create(c);
   const r=f.app.engine.runtimes.get(id);await r.channel.pair();
   r.harness.run=async({onEvent})=>{
    onEvent({type:'activity',itemId:'search-1',text:'正在查询网页…'});

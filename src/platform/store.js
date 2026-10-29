@@ -29,7 +29,7 @@ export class PlatformStore {
   userByName(name) { return this.db.prepare('SELECT * FROM users WHERE username=?').get(name); }
   addUser(username, hash, role='user') {
     const id=randomUUID();
-    try { this.db.prepare('INSERT INTO users VALUES(?,?,?,?,?)').run(id,username,hash,role,now()); }
+    try { this.tx(()=>{this.db.prepare('INSERT INTO users VALUES(?,?,?,?,?)').run(id,username,hash,role,now());this.createAssistant(id,'我的助手');}); }
     catch(e) { if (String(e.message).includes('UNIQUE')) throw new AppError(409,'此用户名已注册'); throw e; }
     return this.user(id);
   }
@@ -46,22 +46,13 @@ export class PlatformStore {
   assistants(userId) { return userId ? this.db.prepare('SELECT * FROM assistants WHERE user_id=? ORDER BY created_at').all(userId) : this.db.prepare('SELECT * FROM assistants ORDER BY created_at').all(); }
   createAssistant(userId,name) {
     if(typeof name!=='string'||!name.trim()||name.trim().length>60) throw new AppError(400,'助手名称须为 1–60 个字符');
-    if(this.assistants(userId).length>=50) throw new AppError(409,'每位用户最多保存 50 个助手');
-    const id=randomUUID(),ts=now(); this.db.prepare('INSERT INTO assistants(id,user_id,name,created_at,updated_at) VALUES(?,?,?,?,?)').run(id,userId,name.trim(),ts,ts); return this.assistant(id);
+    if(this.assistants(userId).length) throw new AppError(409,'每位用户只有一个默认助手','SINGLE_ASSISTANT');
+    const id=randomUUID(),ts=now(); this.db.prepare('INSERT INTO assistants(id,user_id,name,active,created_at,updated_at) VALUES(?,?,?,1,?,?)').run(id,userId,name.trim(),ts,ts); return this.assistant(id);
   }
-  activate(id,user,stopId) {
-    return this.tx(()=>{
-      const a=this.owned(id,user); if(a.active) return {assistant:a,stopped:null};
-      const active=this.db.prepare('SELECT id,name FROM assistants WHERE user_id=? AND active=1').all(user.id);
-      if(active.length>=3 && !stopId) throw new AppError(409,'最多同时激活 3 个助手，请先选择一个助手停止','ACTIVE_LIMIT',{active});
-      let stopped=null;
-      if(stopId){ const old=this.owned(stopId,user); if(!old.active||stopId===id) throw new AppError(400,'请选择正在激活的其他助手');
-        this.db.prepare('UPDATE assistants SET active=0,updated_at=? WHERE id=?').run(now(),stopId); stopped=stopId;
-      }
-      if(this.db.prepare('SELECT COUNT(*) n FROM assistants WHERE user_id=? AND active=1').get(user.id).n>=3) throw new AppError(409,'激活数量已达上限','ACTIVE_LIMIT',{active});
-      this.db.prepare('UPDATE assistants SET active=1,updated_at=? WHERE id=?').run(now(),id);
-      this.audit(user.id,'activate',id); return {assistant:this.assistant(id),stopped};
-    });
+  activate(id,user) {
+    this.owned(id,user);
+    this.db.prepare('UPDATE assistants SET active=1,updated_at=? WHERE id=?').run(now(),id);
+    return {assistant:this.assistant(id),stopped:null};
   }
   deactivate(id,user) { this.owned(id,user); this.db.prepare('UPDATE assistants SET active=0,updated_at=? WHERE id=?').run(now(),id); this.audit(user.id,'deactivate',id); }
   rename(id,user,name){this.owned(id,user); if(typeof name!=='string'||!name.trim()||name.trim().length>60)throw new AppError(400,'名称须为 1–60 个字符');this.db.prepare('UPDATE assistants SET name=?,updated_at=? WHERE id=?').run(name.trim(),now(),id);}

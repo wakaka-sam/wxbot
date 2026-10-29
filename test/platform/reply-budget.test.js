@@ -68,7 +68,7 @@ test('升级从既有回执恢复额度；网络结果不明仍占额度，其�
 test('平台保留超额 outbox 且不忙循环；网页输入不重置，CLI 返回等待，微信新输入后自动续发',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'wxbot-budget-engine-')),sent=[];
   const store=new PlatformStore(dir);
-  const user=store.addUser('quota-user','unused'),assistant=store.createAssistant(user.id,'quota');
+  const user=store.addUser('quota-user','unused'),assistant=store.assistants(user.id)[0];
   store.activate(assistant.id,user);
   const api={async sendText(a,text){sent.push(text);}};
   const engine=new Engine(store,dir,{channelFactory:({dir})=>setupChannel(dir,api),harnessFactory:()=>({async close(){}})});

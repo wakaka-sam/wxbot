@@ -5,7 +5,7 @@ import {fixture,register,create,until} from './helpers.js';
 
 async function bound(f,client,name='助手',account={id:'mirror-bot',userId:'mirror-user'}){
  const id=await create(client,name);
- await client.request(`/api/assistants/${id}/activate`,{});
+
  const channel=f.app.engine.runtimes.get(id).channel;
  await channel.pair(account);
  await until(()=>!f.app.engine.runtimes.get(id).delivering);
@@ -35,32 +35,23 @@ test('网页输入带 [User]: 同步到对应微信，先于本轮回复且重�
  }finally{await f.close();}
 });
 
-test('断线后的长消息按段保留前缀，重启重连后按序投递，首次配对前不追溯同步',async()=>{
+test('连接时长消息分段保留前缀，断线拒绝新输入，已有投递重连后恢复',async()=>{
  const f=await fixture();try{
-  const c=await register(f),id=await create(c);
-  await c.request(`/api/assistants/${id}/activate`,{});
-  await c.request(`/api/assistants/${id}/messages`,{text:'配对前的历史',requestId:randomUUID()});
-  await until(()=>!f.app.engine.runtimes.get(id).active);
-  assert.equal(f.app.store.deliveries(id).length,0);
-  const channel=f.app.engine.runtimes.get(id).channel;
-  await channel.pair({id:'long-bot',userId:'long-user'});
-  await until(()=>!f.app.engine.runtimes.get(id).active&&!f.app.engine.runtimes.get(id).delivering);
-  await channel.disconnect();
+  const c=await register(f),{id,channel}=await bound(f,c);
+  const originalDeliver=f.app.engine.deliver;f.app.engine.deliver=()=>{};
   const body={text:'长消息🙂\n'+'🌲'.repeat(2600),requestId:randomUUID()};
-  await c.request(`/api/assistants/${id}/messages`,body);
-  await until(()=>!f.app.engine.runtimes.get(id).active);
-  const queued=f.app.store.deliveries(id).map(d=>JSON.parse(d.payload));
-  assert.equal(queued.filter(d=>d.text.startsWith('[User]: ')).length,3);
-  await f.restart();
-  assert.equal(f.fake.sent.filter(s=>s.text.startsWith('[User]: ')).length,0);
+  assert.equal((await c.request(`/api/assistants/${id}/messages`,body)).status,202);
+  await until(()=>f.fake.runs.length===1&&!f.app.engine.runtimes.get(id).active);
+  await channel.disconnect();f.app.engine.deliver=originalDeliver;
+  const blocked=await c.request(`/api/assistants/${id}/messages`,{text:'离线不能使用',requestId:randomUUID()});assert.equal(blocked.data.code,'WECHAT_REQUIRED');
+  assert.equal(f.app.store.deliveries(id).map(d=>JSON.parse(d.payload)).filter(d=>d.text.startsWith('[User]: ')).length,3);
+  await f.restart();assert.equal(f.fake.sent.filter(s=>s.text.startsWith('[User]: ')).length,0);
   const resumed=f.app.engine.runtimes.get(id).channel;
-  await resumed.pair({id:'long-bot',userId:'long-user'});
+  await resumed.pair({id:'mirror-bot',userId:'mirror-user'});
   await until(()=>!f.app.engine.runtimes.get(id).delivering&&!f.app.engine.runtimes.get(id).active);
-  const copies=f.fake.sent.filter(s=>s.text.startsWith('[User]: '));
-  assert.equal(copies.length,3);assert.ok(copies.every(s=>Array.from(s.text).length<=1200));
-  assert.equal(copies.map(s=>s.text.slice('[User]: '.length)).join(''),body.text);
-  assert.equal(new Set(copies.map(s=>s.id)).size,3);
-  await c.request(`/api/assistants/${id}/messages`,body);
+  const copies=f.fake.sent.filter(s=>s.text.startsWith('[User]: '));assert.equal(copies.length,3);
+  assert.ok(copies.every(s=>Array.from(s.text).length<=1200));assert.equal(copies.map(s=>s.text.slice('[User]: '.length)).join(''),body.text);
+  assert.equal((await c.request(`/api/assistants/${id}/messages`,body)).data.duplicate,true);
   assert.equal(f.fake.sent.filter(s=>s.text.startsWith('[User]: ')).length,3);
  }finally{await f.close();}
 });

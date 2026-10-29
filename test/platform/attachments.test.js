@@ -67,8 +67,8 @@ test('PDF 提取文字，不以文件名代替内容',{skip:!existsSync('/usr/bi
 test('附件随任务落库，重启恢复且不重复；所有者/admin 下载，其他用户与未登录拒绝',async()=>{
  const f=await fixture();try{
   const alice=await register(f),bob=await register(f,'bob'),admin=f.client();await admin.request('/api/login',{username:'admin',password:'Admin-test-password-731'});
-  const id=await create(alice);await alice.request(`/api/assistants/${id}/activate`,{});
-  let channel=f.app.engine.runtimes.get(id).channel;
+  const id=await create(alice);
+  let channel=f.app.engine.runtimes.get(id).channel;channel.state={...channel.state,phase:'connected',account:{id:'attachment-bot',userId:'owner'}};channel.emitState();
   const image=await saved(channel.options.dir,PNG,'测试.png'),doc=await saved(channel.options.dir,Buffer.from('ATTACHMENT-CONTENT-493'),'notes.txt');
   const originalWake=f.app.engine.wake;f.app.engine.wake=()=>{};
   channel.emit('input',{id:'attachment-message',text:'',attachments:[image,doc]});
@@ -102,7 +102,7 @@ test('Codex 使用隔离 workspace 内 localImage，文字与图片同一 turn',
 
 test('生成中收到图片会中断同一会话；读取失败提示也回传 ClawBot',async()=>{
  const f=await fixture();try{
-  const c=await register(f),id=await create(c);await c.request(`/api/assistants/${id}/activate`,{});
+  const c=await register(f),id=await create(c);
   const channel=f.app.engine.runtimes.get(id).channel;await channel.pair();
   channel.input('WAIT 先构思','before-image');await until(()=>f.fake.runs.length===1);
   const thread=f.fake.runs[0].threadId,image=await saved(channel.options.dir,PNG,'new.png');
@@ -116,8 +116,8 @@ test('生成中收到图片会中断同一会话；读取失败提示也回传 C
 
 test('附件尚在读取时收到补充输入：取消旧准备，将原图与补充文字一起提交',async()=>{
  const f=await fixture();try{
-  const c=await register(f),id=await create(c);await c.request(`/api/assistants/${id}/activate`,{});
-  const channel=f.app.engine.runtimes.get(id).channel,image=await saved(channel.options.dir,PNG,'pending.png');
+  const c=await register(f),id=await create(c);
+  const channel=f.app.engine.runtimes.get(id).channel;await channel.pair();const image=await saved(channel.options.dir,PNG,'pending.png');
   let reading=false,release;const held=new Promise(r=>release=r);let first=true;
   channel.readAttachment=async a=>{if(first){first=false;reading=true;await held;}return readChannelAttachment(channel.options.dir,a.id);};
   channel.input('这是原图','original-picture',[image]);await until(()=>reading);
@@ -131,7 +131,7 @@ test('附件尚在读取时收到补充输入：取消旧准备，将原图与�
 test('旧数据库无损新增附件字段，历史文字及已存在附件保持可读',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'wxbot-migration-test-'));let store;
  try{
-  store=new PlatformStore(dir);store.addUser('test','hash');const user=store.users()[0],a=store.createAssistant(user.id,'助手');store.addMessage(a.id,{role:'user',text:'旧消息'});store.close();
+  store=new PlatformStore(dir);store.addUser('test','hash');const user=store.users()[0],a=store.assistants(user.id)[0];store.addMessage(a.id,{role:'user',text:'旧消息'});store.close();
   const db=new DatabaseSync(join(dir,'platform.sqlite'));db.exec('ALTER TABLE messages DROP COLUMN attachments');db.close();
   store=new PlatformStore(dir);assert.equal(store.messages(a.id)[0].text,'旧消息');assert.deepEqual(store.messages(a.id)[0].attachments,[]);
   const old=store.submit(a.id,'[微信附件]','wechat','wechat:legacy');

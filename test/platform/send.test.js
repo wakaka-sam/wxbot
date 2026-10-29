@@ -14,7 +14,7 @@ test('平台真实发送命令经过 Harness relay 与持久 outbox，重复请�
   const f = await fixture();
   try {
     const user = await register(f), id = await create(user);
-    await user.request(`/api/assistants/${id}/activate`, {});
+
     const r = f.app.engine.runtimes.get(id);
     await r.channel.pair();
     const tools = await installSendTools(join(f.dir, 'tool-home'));
@@ -53,7 +53,7 @@ test('发送工具拒绝旧轮次与微信身份变更；发送失败仍保留�
   const f = await fixture();
   try {
     const c = await register(f), id = await create(c);
-    await c.request(`/api/assistants/${id}/activate`, {});
+
     const r = f.app.engine.runtimes.get(id); await r.channel.pair();
     let oldSend, checked = false;
     r.harness.run = async ({ onSend, onEvent }) => {
@@ -82,7 +82,7 @@ test('平台未知发送结果不会以自动最终回复重新发送', async ()
   const f = await fixture();
   try {
     const c = await register(f), id = await create(c);
-    await c.request(`/api/assistants/${id}/activate`, {});
+
     const r = f.app.engine.runtimes.get(id); await r.channel.pair();
     let attempts = 0, finished = false;
     r.harness.run = async ({ onSend, onEvent }) => {

@@ -7,7 +7,7 @@ test('账号权限：注册不能提权，跨用户助手/历史/SSE不可访问
  const f=await fixture();try{
   const alice=await register(f),bob=await register(f,'bob'),admin=f.client();
   assert.equal((await admin.request('/api/login',{username:'admin',password:'Admin-test-password-731'})).status,200);
-  const a=await create(alice);await alice.request(`/api/assistants/${a}/activate`,{});
+  const a=await create(alice);
   for(const suffix of ['', '/messages','/events'])assert.equal((await bob.request(`/api/assistants/${a}${suffix}`)).status,404);
   assert.equal((await bob.request(`/api/assistants/${a}/messages`,{text:'attack',requestId:randomUUID()})).status,404);
   assert.equal((await bob.request('/api/admin/users')).status,403);
@@ -21,26 +21,22 @@ test('账号权限：注册不能提权，跨用户助手/历史/SSE不可访问
  }finally{await f.close();}
 });
 
-test('激活上限事务：并发激活最多三个，明确替换后旧助手停止且会话保留',async()=>{
+test('注册自动创建唯一助手，并发获取与旧新增接口不能创建第二个',async()=>{
  const f=await fixture();try{
-  const a=await register(f),ids=await Promise.all([1,2,3,4].map(i=>create(a,'助手'+i)));
-  const results=await Promise.all(ids.map(id=>a.request(`/api/assistants/${id}/activate`,{})));
-  assert.equal(results.filter(r=>r.status===200).length,3);const blocked=results.findIndex(r=>r.status===409);assert.equal(results[blocked].data.code,'ACTIVE_LIMIT');
-  const active=(await a.request('/api/assistants')).data.assistants.filter(x=>x.active);assert.equal(active.length,3);
-  const old=active[0].id;await a.request(`/api/assistants/${old}/messages`,{text:'保留会话',requestId:randomUUID()});
-  await until(()=>f.app.store.assistant(old).thread_id&&!f.app.engine.runtimes.get(old).active);
-  const thread=f.app.store.assistant(old).thread_id;
-  const replacement=await a.request(`/api/assistants/${ids[blocked]}/activate`,{stopAssistantId:old});assert.equal(replacement.status,200);
-  assert.equal(f.app.store.assistant(old).active,0);assert.equal(f.app.store.assistant(old).thread_id,thread);
-  assert.equal(f.app.store.assistants().filter(x=>x.active).length,3);
-  const bob=await register(f,'bob');const b=await create(bob);await bob.request(`/api/assistants/${b}/activate`,{});
-  assert.equal((await a.request(`/api/assistants/${old}/activate`,{stopAssistantId:b})).status,404);
+  const c=await register(f),u=f.app.store.userByName('alice');assert.equal(f.app.store.assistants(u.id).length,1);
+  const results=await Promise.all(Array.from({length:5},()=>c.request('/api/assistants')));
+  const id=results[0].data.assistants[0].id;assert.ok(results.every(r=>r.data.assistants.length===1&&r.data.assistants[0].id===id));
+  assert.equal((await c.request('/api/assistants',{name:'第二个'})).data.code,'SINGLE_ASSISTANT');
+  assert.throws(()=>f.app.store.createAssistant(u.id,'第二个'),/只有一个/);
+  assert.equal((await c.request(`/api/assistants/${id}/deactivate`,{})).status,410);
+  await f.restart();assert.equal(f.app.store.assistants(u.id)[0].id,id);
  }finally{await f.close();}
 });
 
 test('生成时新输入实际中断原轮次，保留线程；输出逐段持久化，重启后续聊',async()=>{
  const f=await fixture();try{
-  const c=await register(f),id=await create(c);await c.request(`/api/assistants/${id}/activate`,{});
+  const c=await register(f),id=await create(c);
+  await f.app.engine.runtimes.get(id).channel.pair();
   const requestId=randomUUID();await c.request(`/api/assistants/${id}/messages`,{text:'WAIT 第一轮',requestId});
   await until(()=>f.fake.runs.length===1);
   const partial=f.app.store.messages(id);assert.ok(partial.some(m=>m.role==='assistant'&&m.text.includes('先确认')));
@@ -59,7 +55,7 @@ test('生成时新输入实际中断原轮次，保留线程；输出逐段持�
 
 test('微信与网页共用线程；首次扫码问候，再次扫码总结最近十条且按段推送',async()=>{
  const f=await fixture();try{
-  const c=await register(f),id=await create(c);await c.request(`/api/assistants/${id}/activate`,{});const channel=f.app.engine.runtimes.get(id).channel;
+  const c=await register(f),id=await create(c);const channel=f.app.engine.runtimes.get(id).channel;
   await channel.pair({id:'bot-a',userId:'owner-a'});await until(()=>f.fake.sent.length===1);assert.match(f.fake.sent[0].text,/你好/);assert.equal(f.fake.runs.length,0);
   channel.input('从微信开始','wx-1');await until(()=>f.fake.runs.length===1&&!f.app.engine.runtimes.get(id).active);
   const thread=f.app.store.assistant(id).thread_id;
@@ -70,7 +66,7 @@ test('微信与网页共用线程；首次扫码问候，再次扫码总结最�
   const prompt=f.fake.runs[2].text;assert.ok(prompt.includes('历史2'));assert.ok(prompt.includes('历史11'));assert.ok(!prompt.includes('历史0'));assert.match(prompt,/最近 10 条/);
   await until(()=>f.fake.sent.some(s=>s.text.includes('欢迎回来')));assert.ok(f.fake.sent.some(s=>s.text.includes('先确认你的问题')));
   assert.ok(f.fake.sent.every(s=>s.binding.accountId==='bot-a'));
-  const other=await create(c,'其他');await c.request(`/api/assistants/${other}/activate`,{});
+  const other=await create(await register(f,'bob'),'其他');
   await assert.rejects(f.app.engine.runtimes.get(other).channel.pair({id:'bot-a',userId:'owner-a'}),/其他助手/);
  }finally{await f.close();}
 });

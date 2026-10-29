@@ -4,7 +4,7 @@ import {fixture,register,create,until} from './helpers.js';
 
 async function bound(f){
  const c=await register(f),id=await create(c);
- await c.request(`/api/assistants/${id}/activate`,{});
+
  const r=f.app.engine.runtimes.get(id);
  await r.channel.pair();
  await until(()=>!r.delivering);
