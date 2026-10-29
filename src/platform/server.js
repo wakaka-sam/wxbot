@@ -7,17 +7,21 @@ import { Auth } from './auth.js';
 import { Engine } from './engine.js';
 import { MEDIA_ID } from './attachments.js';
 import { describeMedia } from '../media.js';
+import { Downloads, handleDownloads } from '../downloads.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const publicFiles={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY',
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
-export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR||join(root,'platform-data')),publicUrl=process.env.PLATFORM_PUBLIC_URL,adminUsername=process.env.PLATFORM_ADMIN_USERNAME||'admin',adminPassword=process.env.PLATFORM_ADMIN_PASSWORD,engineOptions={}}={}){
- const store=new PlatformStore(dir),auth=new Auth(store,{secure:publicUrl?.startsWith('https://')}),engine=new Engine(store,dir,engineOptions);
+export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR||join(root,'platform-data')),publicUrl=process.env.PLATFORM_PUBLIC_URL,adminUsername=process.env.PLATFORM_ADMIN_USERNAME||'admin',adminPassword=process.env.PLATFORM_ADMIN_PASSWORD,engineOptions={},downloadTokenFile=process.env.WXBOT_DOWNLOAD_TOKEN_FILE}={}){
+ const downloads=new Downloads(join(dir,'downloads'),{publicUrl});
+ const store=new PlatformStore(dir),auth=new Auth(store,{secure:publicUrl?.startsWith('https://')}),engine=new Engine(store,dir,{publishDownload:(...args)=>downloads.publish(...args),...engineOptions});
  if(!store.users().some(u=>u.role==='admin')){if(!adminPassword){store.close();throw new Error('首次启动请设置 PLATFORM_ADMIN_PASSWORD（至少 10 位），用于初始化管理员');}await auth.register(adminUsername,adminPassword,'admin');}
  await engine.init();const clients=new Map();let closing=false;
  const sendEvent=(res,type,data)=>{if(res.writableLength>1024*1024)res.destroy();else res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);};
  engine.on('event',event=>{for(const[res,c]of clients){if(c.assistantId!==event.assistantId)continue;if(!auth.current(c.req)){res.end();clients.delete(res);continue;}sendEvent(res,'update',event);}});
  const heartbeat=setInterval(()=>{for(const[res,c]of clients){if(!auth.current(c.req)){res.end();clients.delete(res);}else res.write(': heartbeat\n\n');}},15000);heartbeat.unref();
+ let cleaning=downloads.cleanup().catch(()=>{});
+ const cleanup=setInterval(()=>{cleaning=cleaning.then(()=>downloads.cleanup()).catch(()=>{});},600000);cleanup.unref();
  const server=http.createServer(async(req,res)=>{
   const send=(status,data,type='application/json; charset=utf-8')=>{res.writeHead(status,{...headers,'Content-Type':type});res.end(type.startsWith('application/json')?JSON.stringify(data):data);};
   try{
@@ -25,6 +29,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    const port=server.address()?.port,origins=[`http://127.0.0.1:${port}`,`http://localhost:${port}`,...(publicUrl?[new URL(publicUrl).origin]:[])];
    if(!origins.some(o=>new URL(o).host===req.headers.host))return send(403,{error:'不允许此访问地址'});
    const url=new URL(req.url,origins[0]);let body={};
+   if(await handleDownloads(req,res,url,downloads,downloadTokenFile))return;
    // External links may load the public shell. Never exempt API requests or writes.
    const publicGet=req.method==='GET'&&Object.hasOwn(publicFiles,url.pathname);
    if(!publicGet){
@@ -100,7 +105,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    throw new AppError(404,'接口不存在');
   }catch(error){if(!res.headersSent)send(error.status||400,{error:error.message,code:error.code||'ERROR',details:error.details});else res.end();}
  });
- return{server,store,auth,engine,async close(){closing=true;clearInterval(heartbeat);for(const res of clients.keys())res.end();clients.clear();await new Promise(resolveClose=>server.close(resolveClose));await engine.close();store.close();}};
+ return{server,store,auth,engine,downloads,async close(){closing=true;clearInterval(heartbeat);clearInterval(cleanup);for(const res of clients.keys())res.end();clients.clear();await new Promise(resolveClose=>server.close(resolveClose));await engine.close();await cleaning;await downloads.close();store.close();}};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const port=Number(process.env.PLATFORM_PORT||3211);if(!Number.isInteger(port)||port<1||port>65535)throw new Error('PLATFORM_PORT 无效');

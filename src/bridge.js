@@ -4,11 +4,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import QRCode from 'qrcode';
 import { trustedBase } from './weixin.js';
 import { downloadMedia, describeMedia, saveMedia } from './media.js';
+import { downloadNotice } from './downloads.js';
 
 export class Bridge extends EventEmitter {
-  constructor(store, api, dir, { media = downloadMedia, pollDelay = 300, retryDelay = 2000, validateAccount = () => {}, replyLimit = 0 } = {}) {
+  constructor(store, api, dir, { media = downloadMedia, pollDelay = 300, retryDelay = 2000, validateAccount = () => {}, replyLimit = 0, publishDownload } = {}) {
     super();
-    Object.assign(this, { store, api, dir, media, pollDelay, retryDelay, validateAccount, replyLimit });
+    Object.assign(this, { store, api, dir, media, pollDelay, retryDelay, validateAccount, replyLimit, publishDownload });
     this.state = { phase: 'offline', detail: '扫码连接微信，开始接收消息', qr: null, lastReceived: null };
     this.jobs = new Set();
   }
@@ -142,7 +143,25 @@ export class Bridge extends EventEmitter {
   }
   async sendMedia(bytes, name, kind, requestId, expected = {}) {
     const description = describeMedia(bytes, name, kind);
-    return this.sendPayload({ text: '', bytes, description }, requestId, expected);
+    const account = this.store.get('account');
+    const result = await this.sendPayload({ text: '', bytes, description }, requestId, expected);
+    if (!this.publishDownload || !['failed', 'unknown'].includes(result.status)) return result;
+    const matches = () => { const a = this.store.get('account'); return a?.id === account?.id && a?.userId === account?.userId; };
+    if (!matches()) return result;
+    try {
+      const id = createHash('sha256').update(`download:${this.dir}:${account.id}:${account.userId}:${requestId}`).digest('hex');
+      const link = await this.publishDownload(bytes, description.name, id);
+      if (!matches()) return result;
+      result.download = { ...link, text: downloadNotice(description.name, link, result.status === 'unknown') };
+      // Platform queues this notice durably in its outbox, sharing the ten-reply limit.
+      // Legacy callers have no platform outbox; use a stable receipt here instead.
+      if (!this.replyLimit) {
+        const noticeId = `${id.slice(0,8)}-${id.slice(8,12)}-${id.slice(12,16)}-${id.slice(16,20)}-${id.slice(20,32)}`;
+        const notice = await this.send(result.download.text, noticeId, { ...expected, accountId: account.id, userId: account.userId });
+        result.download.noticeStatus = notice.status;
+      }
+    } catch { result.downloadError = '备用下载链接暂时无法提供'; }
+    return result;
   }
   async sendPayload({ text, bytes, description }, requestId, expected) {
     if (!bytes && (typeof text !== 'string' || !text.trim())) throw new Error('请输入要发送的文字');

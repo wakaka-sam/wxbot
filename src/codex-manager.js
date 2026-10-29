@@ -218,6 +218,7 @@ export class CodexManager {
     if (!deliveryError) for (const [index, attachment] of (job.replyAttachments || []).entries()) {
       if (this.closed || this.scope() !== job.scope) return;
       let uncertain = false;
+      let linkNotified = false;
       try {
         const hash = createHash('sha256').update(`codex-media:${job.id}:${index}`).digest('hex');
         const requestId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
@@ -225,12 +226,14 @@ export class CodexManager {
         const bytes = await readFile(join(this.dir, 'media', attachment.id));
         const result = await this.bridge.sendMedia(bytes, attachment.name, attachment.kind, requestId,
           { accountId: job.accountId, userId: job.userId, source: 'codex' });
+        linkNotified = ['sent', 'unknown'].includes(result.download?.noticeStatus);
         if (result.status !== 'sent') {
           uncertain = result.status === 'unknown' || result.status === 'sending';
           throw new Error(result.error || '附件发送结果待确认');
         }
       } catch (error) {
         deliveryError = `附件 ${attachment.name}：${error.message}`;
+        if (linkNotified) { deliveryError += '；已生成备用下载链接并尝试通知'; break; }
         if (this.closed || this.scope() !== job.scope) return;
         const hash = createHash('sha256').update(`codex-media-notice:${job.id}:${index}`).digest('hex');
         const requestId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;

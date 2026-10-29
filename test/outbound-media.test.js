@@ -168,6 +168,13 @@ test('Codex 附件失败明确通知且恢复不重复；未知结果不宣称�
     await t.app.codex.deliver(t.app.store.codexJob('unknown-file'));
     assert.match(t.h.items.at(-1).text_item.text, /结果未能确认/);
     assert.doesNotMatch(t.h.items.at(-1).text_item.text, /发送失败/);
+    t.app.bridge.sendMedia = async () => ({ status: 'failed', error: 'upload failed', download: { noticeStatus: 'sent' } });
+    const before = t.h.items.length;
+    t.app.store.addCodexJob({ id: 'linked-file', scope: 'bot:owner', accountId: 'bot', userId: 'owner',
+      status: 'replying', ...prepared });
+    await t.app.codex.deliver(t.app.store.codexJob('linked-file'));
+    assert.equal(t.h.items.length, before + 1); // Only preamble; no second failure notice after the link.
+    assert.match(t.app.store.codexJob('linked-file').deliveryError, /备用下载链接/);
   } finally { await t.close(); }
 });
 
@@ -241,5 +248,35 @@ test('Codex 运行触发 typing，最终附件实际回传、恢复不重复发�
     mode = 'error'; enqueue('fail'); await until(() => !t.app.codex.draining);
     assert.equal(t.app.store.codexJob('fail').outcome, 'failed');
     assert.equal(t.h.typing.at(-1), 2);
+  } finally { await t.close(); }
+});
+
+test('附件失败自动提供下载链接，重复请求不重复通知、绑定变更不串号、发布故障保留失败', async () => {
+  const t = await setup();
+  try {
+    t.h.failUpload();
+    const bytes = Buffer.from('downloadable report'), id = randomUUID();
+    const published = [];
+    t.app.bridge.publishDownload = async (data, name, key) => {
+      assert.deepEqual(data, bytes); assert.equal(name, 'report.txt'); published.push(key);
+      return { url: 'https://download.test/downloads/' + 'a'.repeat(64), expiresAt: Date.now() + 86400000 };
+    };
+    const first = await t.send(bytes, 'report.txt', 'file', id);
+    assert.equal(first.data.delivery.status, 'failed');
+    assert.equal(first.data.delivery.download.noticeStatus, 'sent');
+    assert.match(t.h.items.at(-1).text_item.text, /https:\/\/download.test\/downloads\//);
+    // Use the same persisted link timestamp, as the real publisher does.
+    const link = first.data.delivery.download;
+    t.app.bridge.publishDownload = async () => link;
+    await t.send(bytes, 'report.txt', 'file', id);
+    assert.equal(t.h.items.length, 1);
+    t.app.bridge.publishDownload = async () => { throw new Error('publisher offline'); };
+    const unavailable = await t.send(bytes, 'report.txt');
+    assert.equal(unavailable.data.delivery.status, 'failed'); assert.ok(unavailable.data.delivery.downloadError);
+    t.app.bridge.publishDownload = async () => {
+      t.app.store.set('account', { ...account, userId: 'changed' }); return link;
+    };
+    await t.send(bytes, 'report.txt');
+    assert.equal(t.h.items.length, 1);
   } finally { await t.close(); }
 });

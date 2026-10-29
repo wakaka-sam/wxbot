@@ -102,13 +102,15 @@ export class Weixin {
     // sendmessage here: an ambiguous acknowledgement could duplicate a chat message.
     let param;
     for (let attempt = 1; attempt <= 3; attempt++) {
-      let status = null, failure;
+      let status = null, errorCode = null, failure;
       const started = Date.now();
       try {
         const response = await this.fetch(url, { method: 'POST', redirect: 'error',
           headers: { 'Content-Type': 'application/octet-stream' }, body: encrypted,
           signal: AbortSignal.timeout(60000) });
         status = response.status;
+        const code = response.headers.get('x-error-code');
+        if (code && /^-?\d{1,10}$/.test(code)) errorCode = Number(code);
         param = response.headers.get('x-encrypted-param')?.trim();
         await response.body?.cancel().catch(() => {});
         if (status !== 200) failure = new Error(`媒体上传失败（HTTP ${status}）`);
@@ -117,7 +119,7 @@ export class Weixin {
         failure = new Error('媒体上传网络异常或超时');
       }
       const retry = Boolean(failure) && attempt < 3 && !(status >= 400 && status < 500);
-      try { this.onUploadResult({ event: 'wechat.upload_result', attempt, status,
+      try { this.onUploadResult({ event: 'wechat.upload_result', attempt, status, errorCode,
         durationMs: Date.now() - started, outcome: failure ? (retry ? 'retrying' : 'failed') : 'uploaded' });
       } catch { /* Diagnostics must not affect delivery. Never log upload URLs or keys. */ }
       if (!failure) break;

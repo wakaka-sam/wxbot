@@ -9,8 +9,8 @@ import { normalizeAttachments, prepareAttachments } from './attachments.js';
 import { validateSend, sendHash } from '../send-client.js';
 const uuidFor=value=>{const h=createHash('sha256').update(value).digest('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;};
 export class Engine extends EventEmitter {
-  constructor(store,dir,{channelFactory=o=>new WechatChannel(o),harnessFactory=o=>new CodexHarness(o)}={}){
-    super();Object.assign(this,{store,dir,channelFactory,harnessFactory});this.runtimes=new Map();this.opening=new Map();this.locks=new Map();this.closed=false;
+  constructor(store,dir,{channelFactory=o=>new WechatChannel(o),harnessFactory=o=>new CodexHarness(o),publishDownload}={}){
+    super();Object.assign(this,{store,dir,channelFactory,harnessFactory,publishDownload});this.runtimes=new Map();this.opening=new Map();this.locks=new Map();this.closed=false;
   }
   publish(id,type,data){this.emit('event',{assistantId:id,type,data});}
   async init(){this.store.recover();for(const a of this.store.assistants()){const r=await this.runtime(a);if(a.active){await r.channel.start();this.reconcile(a.id,r);this.wake(a.id);this.deliver(a.id);}}}
@@ -19,7 +19,7 @@ export class Engine extends EventEmitter {
     if(this.opening.has(a.id))return this.opening.get(a.id);
     const opening=(async()=>{
       const dir=join(this.dir,'assistants',a.id);await mkdir(dir,{recursive:true,mode:0o700});
-      const channel=this.channelFactory({dir:join(dir,'channel'),validateBinding:account=>{
+      const channel=this.channelFactory({dir:join(dir,'channel'),bridgeOptions:{publishDownload:this.publishDownload},validateBinding:account=>{
         const key=`binding:${account.id}`,owner=this.store.get(key);
         if(owner&&owner!==a.id)throw new Error('此微信连接已绑定其他助手，请回到原助手继续会话');
         const prior=this.store.get(`assistant-binding:${a.id}`);
@@ -148,6 +148,16 @@ export class Engine extends EventEmitter {
             this.store.deliveryState(row.id,'pending',result.error);
             r.blockedQuotaEpoch=result.budgetEpoch??r.channel.snapshot().replyBudget?.epoch??0;
             this.publish(id,'delivery',{id:row.id});break;
+          }
+          if(result.download){
+            const noticeId=uuidFor(`download-notice:${row.id}`),text=result.download.text;
+            const message=this.store.tx(()=>{
+              const m=this.store.message(noticeId)||this.store.addMessage(id,{id:noticeId,role:'assistant',text,source:'download-fallback'});
+              this.store.queueDelivery(noticeId,id,{text,binding:p.binding});
+              return m;
+            });
+            this.publish(id,'message',message);
+            result.error=`${result.error||'附件发送结果未确认'}；备用下载链接已加入发送队列`;
           }
           this.store.deliveryState(row.id,result.status==='sent'?'sent':result.status==='unknown'?'unknown':'failed',result.error||null);}
         catch(error){this.store.deliveryState(row.id,'failed',error.message);}

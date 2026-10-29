@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Weixin } from './weixin.js';
 import { Profiles } from './profiles.js';
 import { MAX_MEDIA_SIZE } from './media.js';
+import { remoteDownloadPublisher } from './downloads.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const securityHeaders = {
@@ -15,7 +16,7 @@ const securityHeaders = {
 
 export async function createApp({ dir = resolve(process.env.CLAWBOT_DATA_DIR || join(root, 'data')),
   api = new Weixin(), bridgeOptions, codexOptions = false } = {}) {
-  const profiles = new Profiles(dir, api, bridgeOptions, codexOptions);
+  const profiles = new Profiles(dir, api, { publishDownload: remoteDownloadPublisher(), ...bridgeOptions }, codexOptions);
   await profiles.init();
   const initial = profiles.items.get('default');
   let closing = false, listStamp = '';
