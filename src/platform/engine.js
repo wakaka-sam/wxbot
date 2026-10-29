@@ -21,11 +21,27 @@ export class Engine extends EventEmitter {
     const opening=(async()=>{
       const dir=join(this.dir,'assistants',a.id);await mkdir(dir,{recursive:true,mode:0o700});
       const channel=this.channelFactory({dir:join(dir,'channel'),bridgeOptions:{publishDownload:this.publishDownload},validateBinding:account=>{
-        const key=`binding:${account.id}`,owner=this.store.get(key);
-        if(owner&&owner!==a.id)throw new Error('此微信连接已绑定其他助手，请回到原助手继续会话');
-        const prior=this.store.get(`assistant-binding:${a.id}`);
-        if(prior&&(prior.id!==account.id||prior.userId!==account.userId))throw new Error('请使用此助手原来绑定的微信账号');
-        this.store.set(key,a.id);this.store.set(`assistant-binding:${a.id}`,{id:account.id,userId:account.userId});
+        if(!account.id||!account.userId)throw new Error('微信未返回完整账号身份，请重新扫码');
+        this.store.tx(()=>{
+          const key=`binding:${account.id}`,owner=this.store.get(key);
+          if(owner&&owner!==a.id)throw new Error('此微信连接已绑定其他助手，请回到原助手继续会话');
+          const prior=this.store.get(`assistant-binding:${a.id}`);
+          // A fresh bot is a connection, not a different human. Keep the owner
+          // pinned to the WeChat user while allowing that user's bot to rotate.
+          if(prior&&prior.userId!==account.userId)throw new Error('本次扫码的微信账号与原绑定账号不一致，请使用原来的微信账号');
+          if(prior&&prior.id!==account.id){
+            const oldKey=`binding:${prior.id}`;
+            if(this.store.get(oldKey)===a.id)this.store.db.prepare('DELETE FROM settings WHERE key=?').run(oldKey);
+            for(const row of this.store.deliveries(a.id)){
+              const payload=JSON.parse(row.payload);
+              if(payload.binding?.accountId!==prior.id||payload.binding?.userId!==account.userId)continue;
+              payload.binding.accountId=account.id;
+              this.store.db.prepare("UPDATE outbox SET payload=? WHERE id=? AND state='pending'").run(JSON.stringify(payload),row.id);
+            }
+            this.store.audit(a.user_id,'wechat-bot-rebound',a.id);
+          }
+          this.store.set(key,a.id);this.store.set(`assistant-binding:${a.id}`,{id:account.id,userId:account.userId});
+        });
       }});
       const r={channel,harness:this.harnessFactory({dir:join(dir,'harness')}),draining:null,delivering:null,active:null,command:Promise.resolve(),stateStamp:'',lastPhase:null,greetingPending:false,connectionStop:null};
       this.runtimes.set(a.id,r);
