@@ -60,6 +60,7 @@ test('视频 relay 拒绝越界参数、符号链接与伪造轮次，输入不�
  try{
   const home=join(dir,'home');await mkdir(home);
   await symlink(dir,join(home,'.local'));
+  await assert.rejects(installGrokVideoTools(home));
   await assert.rejects(createVideoRelay(home,()=>{}));await rm(join(home,'.local'));
   let calls=0;relay=await createVideoRelay(home,async r=>{validateVideoRequest(r);calls++;return {status:'queued',jobId:r.jobId};});
   const root=join(home,'.local/share/wxbot-video'),request=input();
@@ -69,6 +70,9 @@ test('视频 relay 拒绝越界参数、符号链接与伪造轮次，输入不�
   const reqId=randomUUID();await writeFile(join(root,relay.turn,reqId+'.req.json'),JSON.stringify({turn:randomUUID(),request}));
   await until(async()=>{try{return JSON.parse(await readFile(join(root,relay.turn,reqId+'.res.json'),'utf8')).error.includes('轮次');}catch{return false;}});assert.equal(calls,0);
   const secret=join(dir,'secret');await writeFile(secret,'SENSITIVE');const link=join(dir,'link');await symlink(secret,link);await assert.rejects(readRegular(link,100));
+  await installGrokVideoTools(home,{visibleHome:home});
+  const script=join(home,'.local/share/wxbot-tools/grok-video-client.js');await rm(script);await symlink(secret,script);
+  await assert.rejects(installGrokVideoTools(home));assert.equal(await readFile(secret,'utf8'),'SENSITIVE');
   const response=await videoRequest(root,relay.turn,{...request,prompt:'$(touch /tmp/not-executed)\n`echo literal`'});assert.equal(response.status,'queued');assert.equal(calls,1);
  }finally{await relay?.close();await rm(dir,{recursive:true,force:true});}
 });
