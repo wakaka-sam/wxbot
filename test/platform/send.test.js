@@ -23,7 +23,7 @@ test('平台真实发送命令经过 Harness relay 与持久 outbox，重复请�
       const h = Object.create(CodexHarness.prototype);
       Object.assign(h, { sendTools: tools, dir: join(f.dir, 'harness'), cwd: f.dir, threadId: 'test-thread', client: {
         async run({ input, onEvent }) {
-          const turn = input[0].text.match(/--turn ([a-f0-9-]{36})/)[1], requestId = randomUUID();
+          const turn = input[0].text.match(/wxbot send --turn ([a-f0-9-]{36})/)[1], requestId = randomUUID();
           const command = [tools.visibleCli, 'send', '--relay-dir', tools.relayRoot, '--turn', turn, '--request-id', requestId, '命令已经发送'];
           receipt = JSON.parse((await exec(process.execPath, command)).stdout);
           assert.equal(receipt.status, 'sent');

@@ -22,7 +22,7 @@ try {
   const skill = await command(['/bin/cat', '/home/assistant/.agents/skills/wxbot-send/SKILL.md']);
   assert.equal(skill.exitCode, 0, skill.stderr); assert.match(skill.stdout, /--turn/);
   harness.client.run = async ({ input }) => {
-    const turn = input[0].text.match(/--turn ([a-f0-9-]{36})/)[1];
+    const turn = input[0].text.match(/wxbot send --turn ([a-f0-9-]{36})/)[1];
     const result = await command(['/home/assistant/.local/bin/wxbot', 'send', '--turn', turn, 'SYNTHETIC-SEND-731']);
     assert.equal(result.exitCode, 0, result.stderr + result.stdout);
     assert.equal(JSON.parse(result.stdout).status, 'sent');

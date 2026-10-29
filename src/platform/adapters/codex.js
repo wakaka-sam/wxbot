@@ -10,6 +10,9 @@ import { CodexClient } from '../../codex-client.js';
 import { createSendRelay } from '../../send-relay.js';
 import { installSendTools, SEND_INSTRUCTIONS } from '../../send-tools.js';
 import { syncCodexAuth } from './codex-auth.js';
+import { installGrokVideoTools } from '../../grok-video-tools.js';
+import { createVideoRelay } from '../../grok-video-relay.js';
+import { GrokVideoJobs } from './grok-video.js';
 const exec=promisify(execFile);
 
 const INSTRUCTIONS=`你是用户创建的私人助手。网页与微信共用同一会话，直接用中文帮助用户。
@@ -38,6 +41,8 @@ export class CodexHarness {
     // A closing CLI may have persisted a refresh; reconcile once more before spawn.
     this.authVersion=await syncCodexAuth(this.authFile,join(home,'.codex','auth.json'),{sourceFile:this.authSource});
     this.sendTools=await installSendTools(home,{visibleHome:'/home/assistant',node:process.execPath});
+    await installGrokVideoTools(home);
+    this.videoJobs=new GrokVideoJobs({dir:join(this.dir,'video-jobs')});
     for(const path of ['.cache','.local','.npm'])await mkdir(join(home,path),{recursive:true,mode:0o700});
     // Each app-server owns a proxy listener; avoid a shared fixed port across assistants.
     const listener=net.createServer();await new Promise((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',resolve);});
@@ -66,13 +71,20 @@ export class CodexHarness {
   }
   async run({text,images=[],onEvent,onSend}){
     this.interrupted=false;
-    const relay=onSend?await createSendRelay(this.sendTools.relayRoot,request=>{
+    const videoRelay=this.videoJobs?await createVideoRelay(join(this.dir,'home'),request=>{
+      if(this.interrupted)throw new Error('视频调用轮次已结束');
+      return this.videoJobs.request(request);
+    }):null;
+    this.videoRelay=videoRelay;
+    let relay;
+    try{
+    relay=onSend?await createSendRelay(this.sendTools.relayRoot,request=>{
       if(this.interrupted||!onSend)throw new Error('发送轮次已结束');
       return onSend(request);
     }):null;
     this.sendRelay=relay;
-    try{
-    const input=[{type:'text',text:relay?`本轮微信发送命令：wxbot send --turn ${relay.turn}。文字通过 stdin 或参数传入；图片用 --image /workspace/图片.png，文件用 --file /workspace/文件.pdf，每次一项，附件最多 20 MB。\n\n${text}`:text,text_elements:[]}];
+    const videoHint=videoRelay?`Grok 视频调用标识：grok-video --turn ${videoRelay.turn}。需要生成视频时读取 grok-video Skill，使用订阅 CLI；此标识仅限本轮。\n\n`:'';
+    const input=[{type:'text',text:videoHint+(relay?`本轮微信发送命令：wxbot send --turn ${relay.turn}。文字通过 stdin 或参数传入；图片用 --image /workspace/图片.png，文件用 --file /workspace/文件.pdf，每次一项，附件最多 20 MB。\n\n${text}`:text),text_elements:[]}];
     if(images.length){
       const mediaDir=join(this.dir,'workspace','incoming');await mkdir(mediaDir,{recursive:true,mode:0o700});
       for(const image of images){
@@ -86,7 +98,7 @@ export class CodexHarness {
       if(e.type==='started'&&this.interrupted)void this.client.interrupt().catch(()=>{});
       if(e.phase==='analysis')return;onEvent(e);
     }});
-    }finally{await relay?.close();if(this.sendRelay===relay)this.sendRelay=null;}
+    }finally{await relay?.close();if(this.sendRelay===relay)this.sendRelay=null;await videoRelay?.close();if(this.videoRelay===videoRelay)this.videoRelay=null;}
   }
   async interrupt(){this.interrupted=true;await this.client?.interrupt();}
   async close(){
@@ -96,5 +108,7 @@ export class CodexHarness {
     if(scope)await exec('/usr/bin/systemctl',['stop',scope],{timeout:10000}).catch(()=>{});
     await closing;
     await this.sendRelay?.close();this.sendRelay=null;
+    await this.videoRelay?.close();this.videoRelay=null;
+    await this.videoJobs?.close();this.videoJobs=null;
   }
 }
