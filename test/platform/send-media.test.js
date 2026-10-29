@@ -11,12 +11,23 @@ import { createSendRelay } from '../../src/send-relay.js';
 import { fixture,register,create,until } from './helpers.js';
 const exec=promisify(execFile),cli=new URL('../../src/cli.js',import.meta.url).pathname;
 
+// Delivery tests start from an established conversation whose initial input was already processed.
+function establishedChannel(options,api,account){
+ const c=new WechatChannel({...options,api});
+ if(!c.store.get('account')){
+  c.store.set('account',account);
+  c.store.ingest([{id:`${account.id}:${account.userId}:initial`,sender:account.userId,text:'开始',attachments:[]}],'cursor','initial',[[`context:${account.id}:${account.userId}`,'initial-context']]);
+ }
+ const history=c.history.bind(c);c.history=()=>history().filter(m=>!m.id.endsWith(':initial'));
+ return c;
+}
+
 test('附件经 CLI、宿主、真实适配器落库：额度提醒后排队，原文件/relay 消失和重启后仍可发送，下载隔离',async()=>{
  const f=await fixture(),textSent=[],mediaSent=[],uploads=[];
  const account={id:'media-bot',userId:'media-user',token:'fake'};
  const api={async updates(a,c,s){await delay(50,undefined,{signal:s});return{msgs:[],get_updates_buf:c};},async sendText(a,text){textSent.push(text);},
   async uploadMedia(a,bytes,description){uploads.push({bytes,description});return{type:description.kind==='image'?2:4};},async sendItem(a,item){mediaSent.push(item);}};
- const factory=options=>{const c=new WechatChannel({...options,api});if(!c.store.get('account'))c.store.set('account',account);return c;};
+ const factory=options=>establishedChannel(options,api,account);
  f.fake.options.channelFactory=factory;f.app.engine.channelFactory=factory;
  let relay;
  try{
@@ -55,7 +66,7 @@ test('上传失败链接持久排队并遵守微信额度，重启后发送一�
  const account={id:'fallback-bot',userId:'fallback-user',token:'fake'};
  const api={async updates(a,c,s){await delay(50,undefined,{signal:s});return{msgs:[],get_updates_buf:c};},
   async sendText(a,text){sent.push(text);},async uploadMedia(){throw new Error('HTTP 500');}};
- const factory=options=>{const c=new WechatChannel({...options,api});if(!c.store.get('account'))c.store.set('account',account);return c;};
+ const factory=options=>establishedChannel(options,api,account);
  f.fake.options.channelFactory=factory;f.app.engine.channelFactory=factory;f.app.downloads.publicUrl='https://download.test';
  try {
   const user=await register(f),id=await create(user);

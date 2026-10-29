@@ -20,7 +20,8 @@ export class WechatChannel extends EventEmitter {
   snapshot(){const s=this.bridge.state,a=this.store.get('account');
     const budget=a?this.store.replyBudget(a,10):null;
     const replyBudget=budget?{epoch:budget.epoch,used:budget.used,remaining:budget.remaining,limit:budget.limit}:null;
-    return {phase:s.phase,detail:replyBudget?.remaining===0?'已达微信连续回复上限，请在微信里再发一条消息以接收后续回复':s.detail,qr:s.qr,account:a?{id:a.id,userId:a.userId}:null,replyBudget};}
+    const waitingForFirstMessage=Boolean(a?.userId)&&budget.epoch===0;
+    return {phase:s.phase,waitingForFirstMessage,detail:waitingForFirstMessage&&s.phase==='connected'?'微信已连接，请在微信中发送第一条消息开始对话':replyBudget?.remaining===0?'已达微信连续回复上限，请在微信里再发一条消息以接收后续回复':s.detail,qr:s.qr,account:a?{id:a.id,userId:a.userId}:null,replyBudget};}
   history(){return this.store.messages(-1).filter(m=>m.direction!=='outbound').map(inputMessage);}
   async readAttachment(attachment){return readChannelAttachment(this.dir,attachment.id);}
   async start(){this.store.set('paused',false);await this.bridge.init();}
@@ -28,13 +29,18 @@ export class WechatChannel extends EventEmitter {
   async login(){await this.bridge.login();}
   async verify(code){this.bridge.verify(code);}
   async disconnect(){this.bridge.logout();await this.bridge.close();}
-  async send(text,id,binding){return this.bridge.send(text,id,binding);}
+  firstMessageBlock(){
+    if(!this.snapshot().waitingForFirstMessage)return null;
+    return {status:'blocked',budgetEpoch:0,error:'请先在微信中发送第一条消息，收到后会继续投递'};
+  }
+  async send(text,id,binding){return this.firstMessageBlock()||this.bridge.send(text,id,binding);}
   async stageAttachment(attachment){
     validateSend('',attachment);
     const bytes=Buffer.from(attachment.data,'base64');
     return saveMedia(bytes,describeMedia(bytes,attachment.name,attachment.kind),this.dir);
   }
   async sendAttachment(attachment,id,binding){
+    const blocked=this.firstMessageBlock();if(blocked)return blocked;
     const bytes=await this.readAttachment(attachment);
     return this.bridge.sendMedia(bytes,attachment.name,attachment.kind,id,binding);
   }

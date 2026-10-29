@@ -98,3 +98,32 @@ test('平台保留超额 outbox 且不忙循环；网页输入不重置，CLI �
     await until(()=>!r.delivering);assert.equal(sent.length,14);
   }finally{await engine.close();store.close();await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('首次微信输入前文本和附件均不投递，网页输入和重启不能解锁，新绑定需要自己的首条消息',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'wxbot-first-input-')),sent=[];
+  const store=new PlatformStore(dir),user=store.addUser('first-input-user','unused'),assistant=store.assistants(user.id)[0];
+  const api={async sendText(a,text){sent.push(text);}};
+  const engine=new Engine(store,dir,{channelFactory:({dir})=>setupChannel(dir,api),harnessFactory:()=>({async close(){}})});
+  const r=await engine.runtime(assistant);engine.wake=()=>{};
+  try{
+    assert.equal(r.channel.snapshot().waitingForFirstMessage,true);
+    r.channel.store.ingest([{id:`${account.id}:other:foreign-input`,sender:'other',text:'wrong user',attachments:[]}],'cursor','foreign',[]);
+    assert.equal(r.channel.snapshot().waitingForFirstMessage,true);
+    const blocked=await r.channel.sendAttachment({id:'not-read-before-first-input'},randomUUID(),binding);
+    assert.equal(blocked.status,'blocked');assert.match(blocked.error,/第一条消息/);
+    engine.submit(assistant.id,'web first','web','first-web');
+    await until(()=>!r.delivering);
+    assert.equal(sent.length,0);assert.equal(store.deliveries(assistant.id).length,1);
+    assert.equal(r.channel.snapshot().replyBudget.used,0);
+    await r.channel.close();r.channel=setupChannel(r.channel.dir,api);
+    engine.deliver(assistant.id);await delay(20);assert.equal(sent.length,0);
+    incoming(r.channel,'first');engine.deliver(assistant.id);
+    await until(()=>sent.length===1&&!r.delivering);
+    assert.deepEqual(sent,['[User]: web first']);assert.equal(r.channel.snapshot().waitingForFirstMessage,false);
+    r.channel.store.set('account',{...account,id:'new-bot'});
+    assert.equal(r.channel.snapshot().waitingForFirstMessage,true);
+    assert.equal((await r.channel.send('new binding',randomUUID(),{...binding,accountId:'new-bot'})).status,'blocked');
+    assert.equal(sent.length,1);
+  }finally{await engine.close();store.close();await rm(dir,{recursive:true,force:true});}
+});

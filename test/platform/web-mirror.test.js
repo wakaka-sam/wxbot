@@ -21,9 +21,9 @@ test('网页输入带 [User]: 同步到对应微信，先于本轮回复且重�
   await until(()=>f.fake.runs.length===1&&!f.app.engine.runtimes.get(id).active&&!f.app.engine.runtimes.get(id).delivering);
   assert.equal(f.fake.runs[0].text,body.text);
   const sent=f.fake.sent.filter(s=>s.dir===channel.options.dir);
-  assert.equal(sent[1].text,'[User]: '+body.text);assert.match(sent[2].text,/先确认/);
-  assert.deepEqual(sent.slice(3).map(s=>s.text),['回答：'+body.text]);
-  assert.ok(sent.slice(1).every(s=>s.binding.accountId==='mirror-bot'&&s.binding.userId==='mirror-user'));
+  assert.equal(sent[0].text,'[User]: '+body.text);assert.match(sent[1].text,/先确认/);
+  assert.deepEqual(sent.slice(2).map(s=>s.text),['回答：'+body.text]);
+  assert.ok(sent.every(s=>s.binding.accountId==='mirror-bot'&&s.binding.userId==='mirror-user'));
   assert.ok(!f.fake.sent.some(s=>s.binding.accountId==='bob-bot'&&s.text.includes(body.text)));
   const retry=await c.request(`/api/assistants/${id}/messages`,body);assert.equal(retry.data.duplicate,true);
   assert.equal(f.fake.sent.filter(s=>s.text==='[User]: '+body.text).length,1);

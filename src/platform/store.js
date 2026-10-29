@@ -58,6 +58,7 @@ export class PlatformStore {
   rename(id,user,name){this.owned(id,user); if(typeof name!=='string'||!name.trim()||name.trim().length>60)throw new AppError(400,'名称须为 1–60 个字符');this.db.prepare('UPDATE assistants SET name=?,updated_at=? WHERE id=?').run(name.trim(),now(),id);}
   thread(id,threadId){this.db.prepare('UPDATE assistants SET thread_id=?,updated_at=? WHERE id=?').run(threadId,now(),id);}
   messages(id,{before=Number.MAX_SAFE_INTEGER,limit=100}={}){return this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND seq<? ORDER BY seq DESC LIMIT ?').all(id,before,limit).reverse().map(decodeMessage);}
+  lastWechatMessageSeq(id){return this.db.prepare("SELECT COALESCE(MAX(seq),0) seq FROM messages WHERE assistant_id=? AND role='user' AND source='wechat'").get(id).seq;}
   recent(id,limit=10){return this.db.prepare("SELECT * FROM messages WHERE assistant_id=? AND kind='chat' AND role IN ('user','assistant') AND (text<>'' OR attachments<>'[]') ORDER BY seq DESC LIMIT ?").all(id,limit).reverse().map(decodeMessage);}
   message(id){return decodeMessage(this.db.prepare('SELECT * FROM messages WHERE id=?').get(id));}
   attachment(assistantId,id){const row=this.db.prepare("SELECT j.value FROM messages m,json_each(m.attachments) j WHERE m.assistant_id=? AND json_extract(j.value,'$.id')=? LIMIT 1").get(assistantId,id);return row?JSON.parse(row.value):null;}

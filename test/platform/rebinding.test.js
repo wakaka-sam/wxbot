@@ -9,7 +9,7 @@ test('同一微信用户更换机器人 ID 可重连，保留 thread，只迁移
   f.app.store.thread(id,'original-thread');await r.channel.disconnect();await r.connectionStop;
   const queue=(key,state='pending',userId='same-owner')=>{f.app.store.queueDelivery(key,id,{text:key,binding:{accountId:'old-bot',userId}});f.app.store.deliveryState(key,state);};
   queue('unsent');queue('sent','sent');queue('unknown','unknown');queue('failed','failed');queue('other-owner','pending','other-owner');
-  // Exercise the actual binding callback without emitting paired/greeting jobs.
+  // Exercise the actual binding callback without emitting channel state changes.
   r.channel.options.validateBinding({id:'new-bot',userId:'same-owner'});
   assert.equal(f.app.store.assistant(id).thread_id,'original-thread');
   assert.equal(f.app.store.get('binding:old-bot'),null);assert.equal(f.app.store.get('binding:new-bot'),id);

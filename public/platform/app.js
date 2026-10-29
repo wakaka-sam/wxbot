@@ -8,7 +8,7 @@ function newRequestId(){
  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 }
 let user=null,authMode='login',assistants=[],selected=null,readOnly=false,mode='workspace',adminScope=null,stream=null,selectionVersion=0,loadingList=false;
-let messages=new Map(),hasMore=false,historyBusy=false,sending=false,pendingSend=null,pairId=null,toastTimer,frame=null,busy=false;
+let messages=new Map(),hasMore=false,historyBusy=false,sending=false,pendingSend=null,pairId=null,pairMessageSeq=0,toastTimer,frame=null,busy=false;
 const drafts=new Map(),phaseNames={offline:'未连接微信',loading:'获取二维码',waiting:'等待扫码',scanned:'等待确认',verifying:'等待配对码',connecting:'连接中',connected:'微信已连接',reconnecting:'微信重连中',paused:'微信已暂停',expired:'微信登录失效',error:'连接异常'};
 const date=new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
 function node(tag,cls,text){const el=document.createElement(tag);if(cls)el.className=cls;if(text!=null)el.textContent=text;return el;}
@@ -35,7 +35,7 @@ function renderChat(){
  $('#send').textContent=sending?'…':pendingSend?'重试':'↑';
  $('#interrupt').hidden=disabled||!a.running;
  $('#chat-input').placeholder=!connected?'连接微信后发送消息…':a.running?'补充新的想法…':'给助手发消息…';
- $('#composer-hint').textContent=!connected?'请先连接微信':a.running?'正在回复 · 可以继续补充':'Enter 发送 · Shift + Enter 换行';
+ $('#composer-hint').textContent=!connected?'请先连接微信':a.running?'正在回复 · 可以继续补充':a.connection.waitingForFirstMessage?'请先在微信发送第一条消息，收到后即可接收微信回复':'Enter 发送 · Shift + Enter 换行';
  $('#chat-status').textContent=!connected?'':a.running?'正在处理你的消息…':a.deliveryErrors?.length?'部分微信消息发送未成功，可在网页查看完整回复。':'';
  $('#chat-status').hidden=!$('#chat-status').textContent;$('#chat-form').hidden=disabled;renderPair();
 }
@@ -50,9 +50,28 @@ $('#chat-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){
 $('#interrupt').onclick=async()=>{try{await api(`/assistants/${selected.id}/interrupt`,{});}catch(error){toast(error.message);}};
 $('#rename-open').onclick=()=>{setSidebar(false);$('#assistant-name').value=selected.name;$('#name-error').hidden=true;$('#name-dialog').showModal();};
 $('#name-form').onsubmit=async e=>{e.preventDefault();const button=$('#name-form button[type=submit]');if(button.disabled)return;button.disabled=true;try{const data=await api(`/assistants/${selected.id}/rename`,{name:$('#assistant-name').value.trim()});$('#name-dialog').close();selected=data.assistant;await refreshList();render();}catch(error){$('#name-error').hidden=false;$('#name-error').textContent=error.message;}finally{button.disabled=false;}};
-function renderPair(){if(!$('#pair-dialog').open||selected?.id!==pairId)return;const c=selected.connection;$('#pair-title').textContent=`连接「${selected.name}」`;$('#pair-detail').textContent=c.detail;$('#qr').hidden=!c.qr;if(c.qr&&$('#qr').src!==c.qr)$('#qr').src=c.qr;$('#qr-placeholder').hidden=Boolean(c.qr);$('#qr-placeholder').textContent=c.account?'✓ 已连接':'▦ 连接微信';$('#qr-refresh').hidden=Boolean(c.account)&&['connected','connecting','reconnecting'].includes(c.phase);$('#qr-refresh').disabled=busy||c.phase==='loading';$('#qr-refresh').textContent=c.qr?'刷新二维码':'生成二维码';$('#verify-form').hidden=c.phase!=='verifying';$('#disconnect').hidden=!c.account;$('#verify-form button').disabled=busy;}
-$('#pair-open').onclick=()=>{pairId=selected.id;$('#pair-error').hidden=true;$('#pair-code').value='';$('#pair-dialog').showModal();renderPair();};
-async function channelAction(action,body={}){const id=pairId;busy=true;renderPair();try{const data=await api(`/assistants/${id}/channel/${action}`,body);if(selected?.id===id){selected=data.assistant;renderChat();}await refreshList();}catch(error){$('#pair-error').hidden=false;$('#pair-error').textContent=error.message;}finally{busy=false;renderChat();}}
+function renderPair(){
+ if(!$('#pair-dialog').open||selected?.id!==pairId)return;
+ const c=selected.connection,connected=c.phase==='connected'&&Boolean(c.account?.userId);
+ if(connected&&(selected.lastWechatMessageSeq||0)>pairMessageSeq){$('#pair-dialog').close();return;}
+ $('#pair-title').textContent=connected?'微信连接成功':`连接「${selected.name}」`;
+ $('#pair-detail').textContent=connected?'现在可以直接在微信中输入消息，与助手对话。':c.detail;
+ $('#pair-success').hidden=!connected;$('#pair-qr-panel').hidden=connected;
+ $('#qr').hidden=!c.qr;if(c.qr&&$('#qr').src!==c.qr)$('#qr').src=c.qr;
+ $('#qr-placeholder').hidden=Boolean(c.qr);$('#qr-placeholder').textContent=c.account?'正在连接微信…':'▦ 连接微信';
+ $('#qr-refresh').hidden=Boolean(c.account)&&['connected','connecting','reconnecting'].includes(c.phase);
+ $('#qr-refresh').disabled=busy||c.phase==='loading';$('#qr-refresh').textContent=c.qr?'刷新二维码':'生成二维码';
+ $('#verify-form').hidden=c.phase!=='verifying';$('#disconnect').hidden=!c.account;$('#verify-form button').disabled=busy;
+}
+$('#pair-open').onclick=async()=>{
+ const id=selected.id;busy=true;renderChat();
+ try{
+  const data=await api(`/assistants/${id}`);if(selected?.id!==id)return;
+  selected=data.assistant;pairId=id;pairMessageSeq=selected.lastWechatMessageSeq||0;
+  $('#pair-error').hidden=true;$('#pair-code').value='';$('#pair-dialog').showModal();renderPair();
+ }catch(error){toast(error.message);}finally{busy=false;renderChat();}
+};
+async function channelAction(action,body={}){const id=pairId;if(action==='login')pairMessageSeq=selected.lastWechatMessageSeq||0;busy=true;renderPair();try{const data=await api(`/assistants/${id}/channel/${action}`,body);if(selected?.id===id){selected=data.assistant;renderChat();}await refreshList();}catch(error){$('#pair-error').hidden=false;$('#pair-error').textContent=error.message;}finally{busy=false;renderChat();}}
 $('#qr-refresh').onclick=()=>channelAction('login');$('#verify-form').onsubmit=e=>{e.preventDefault();channelAction('verify',{code:$('#pair-code').value.trim()});};$('#disconnect').onclick=()=>{if(confirm('断开微信后将无法继续使用助手，当前回复也会停止。历史记录保留，重新连接后可继续。'))channelAction('disconnect');};
 async function showWorkspace(){setSidebar(false);selectionVersion++;stream?.close();stream=null;selected=null;messages.clear();mode='workspace';adminScope=null;await refreshList();render();}
 $('#workspace-nav').onclick=showWorkspace;

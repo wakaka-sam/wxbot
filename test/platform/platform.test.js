@@ -53,18 +53,26 @@ test('生成时新输入实际中断原轮次，保留线程；输出逐段持�
  }finally{await f.close();}
 });
 
-test('微信与网页共用线程；首次扫码问候，再次扫码总结最近十条且按段推送',async()=>{
+test('扫码不主动问候或总结，收到微信输入后回复且与网页共用线程',async()=>{
  const f=await fixture();try{
   const c=await register(f),id=await create(c);const channel=f.app.engine.runtimes.get(id).channel;
-  await channel.pair({id:'bot-a',userId:'owner-a'});await until(()=>f.fake.sent.length===1);assert.match(f.fake.sent[0].text,/你好/);assert.equal(f.fake.runs.length,0);
+  await channel.pair({id:'bot-a',userId:'owner-a'});await until(()=>!f.app.engine.runtimes.get(id).delivering);assert.equal(f.fake.sent.length,0);assert.equal(f.fake.runs.length,0);assert.equal(f.app.engine.snapshot(id).lastWechatMessageSeq,0);
   channel.input('从微信开始','wx-1');await until(()=>f.fake.runs.length===1&&!f.app.engine.runtimes.get(id).active);
   const thread=f.app.store.assistant(id).thread_id;
   await c.request(`/api/assistants/${id}/messages`,{text:'从网页继续',requestId:randomUUID()});await until(()=>f.fake.runs.length===2&&!f.app.engine.runtimes.get(id).active);
   assert.equal(f.fake.runs[1].threadId,thread);await until(()=>f.fake.sent.some(s=>s.text.includes('从网页继续')));
   for(let i=0;i<12;i++)f.app.store.addMessage(id,{role:i%2?'assistant':'user',text:'历史'+i});
-  await channel.pair({id:'bot-a',userId:'owner-a'});await until(()=>f.fake.runs.length===3&&!f.app.engine.runtimes.get(id).active);
-  const prompt=f.fake.runs[2].text;assert.ok(prompt.includes('历史2'));assert.ok(prompt.includes('历史11'));assert.ok(!prompt.includes('历史0'));assert.match(prompt,/最近 10 条/);
-  await until(()=>f.fake.sent.some(s=>s.text.includes('欢迎回来')));assert.ok(f.fake.sent.some(s=>s.text.includes('先确认你的问题')));
+  await until(()=>!f.app.engine.runtimes.get(id).delivering);
+  const sentBefore=f.fake.sent.length,seq=f.app.engine.snapshot(id).lastWechatMessageSeq;
+  assert.ok(seq>0);
+  await channel.pair({id:'bot-a',userId:'owner-a'});
+  await until(()=>!f.app.engine.runtimes.get(id).delivering);
+  assert.equal(f.fake.runs.length,2);assert.equal(f.fake.sent.length,sentBefore);
+  assert.equal(f.app.store.pending(id).length,0);assert.equal(f.app.engine.snapshot(id).lastWechatMessageSeq,seq);
+  channel.input('从微信开始','wx-1');assert.equal(f.app.engine.snapshot(id).lastWechatMessageSeq,seq);
+  channel.input('重新连接后的新消息','wx-2');await until(()=>f.fake.runs.length===3&&!f.app.engine.runtimes.get(id).active);
+  assert.ok(f.app.engine.snapshot(id).lastWechatMessageSeq>seq);assert.equal(f.fake.runs[2].threadId,thread);
+  assert.ok(!f.app.store.messages(id).some(m=>['greeting','summary'].includes(m.kind)));
   assert.ok(f.fake.sent.every(s=>s.binding.accountId==='bot-a'));
   const other=await create(await register(f,'bob'),'其他');
   await assert.rejects(f.app.engine.runtimes.get(other).channel.pair({id:'bot-a',userId:'owner-a'}),/其他助手/);
