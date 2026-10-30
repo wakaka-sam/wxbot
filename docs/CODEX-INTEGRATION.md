@@ -53,3 +53,9 @@ Linux 隔离执行器的可选验证脚本为 `scripts/test-platform-send.mjs`�
 CLI 人工入口目前针对本机消息台，不能拿平台用户 Cookie 在外部冒充助手发送。平台入口由当前助手执行器持有。不提供任意联系人发送、媒体发送、定时发送或 PTY 接管。
 
 平台不再将工具生命周期状态（查询网页、执行命令、修改文件、调用工具、子代理协作）写入聊天记录或推送网页/微信；旧版本排队中的同类固定提示也会跳过，不占用微信回复额度。助手正常输出的进度、正文以及执行失败和附件处理错误提示继续显示。
+
+### 浏览器附属请求容错
+
+助手使用 `/home/assistant/.local/share/wxbot-tools/browser.cjs` 的 `openBrowser()`，取得 `{browser, context, page, omitted}`。它保留 Codex 代理、关闭 Service Worker，并仅中止发往 `rum.battlenet.com.cn` 的非导航 HTTP(S) 请求，避免该失效附属域名的 DNS 错误被 Codex 误归类为内网访问后终止整条命令。主页面、登录及其他域名继续接受原网络策略；不伪造请求成功，也不把此规则泛化为忽略所有网络错误。新页面应从返回的 `context` 创建，结束后关闭 `browser`。
+
+这是浏览器侧对已知失效请求的兼容处理，不是修改 Codex 的 DNS 错误分类。已有脚本如果直接启动 Playwright，需要改用该封装；助手启动/恢复时会获得更新后的使用指引。`scripts/test-platform-battlenet.mjs` 在独立临时会话中验证附属请求失败容错及原始战网页面访问，不使用生产用户的浏览器或登录信息。
