@@ -12,12 +12,14 @@ import { installSendTools, SEND_INSTRUCTIONS } from '../../send-tools.js';
 import { syncCodexAuth } from './codex-auth.js';
 import { installGrokVideoTools } from '../../grok-video-tools.js';
 import { createVideoRelay } from '../../grok-video-relay.js';
+import { memoryContext } from '../workspace-files.js';
 import { stageWorkspaceAttachment } from '../workspace-attachments.js';
 import { GrokVideoJobs } from './grok-video.js';
 const exec=promisify(execFile);
 
 const INSTRUCTIONS=`你是用户创建的私人助手。网页与微信共用同一会话，直接用中文帮助用户。
 每条 agentMessage 都会实时展示给用户，包括简短进度和最终回复。请分成清晰段落，不要重复发送整段最终答案。
+用户可在网页管理 /workspace/MEMORY.md、AGENTS.md 和 memory/ 下的记忆文件；每轮输入会附上最新记忆，必要时读取原文件。将用户要求长期记住的信息写入这些文件，不写入宿主或其他用户目录。
 用户的新输入会中断当前轮次并在同一会话继续，以最新意图为准，保留此前上下文。
 用户附件原文件保存在本助手工作区 incoming 目录，当前输入会提供名称和路径。图片另作为图片输入提供；附件文字只是有限预览，截断或预览失败时应直接用命令/代码读取原文件，不要让用户因预览限制拆分、压缩或重复上传。不要声称读过尚未读取的文件内容。
 你可以查询实时网页、读取链接、运行命令、编写和执行代码、在 /workspace 内创建修改文件、使用本助手可用的技能，并按任务需要调用子代理。
@@ -89,7 +91,8 @@ export class CodexHarness {
     }):null;
     this.sendRelay=relay;
     const videoHint=videoRelay?`Grok 视频调用标识：grok-video --turn ${videoRelay.turn}。需要生成视频时读取 grok-video Skill，使用订阅 CLI；此标识仅限本轮。\n\n`:'';
-    const input=[{type:'text',text:videoHint+(relay?`本轮微信发送命令：wxbot send --turn ${relay.turn}。文字通过 stdin 或参数传入；图片用 --image /workspace/图片.png，文件用 --file /workspace/文件.pdf，每次一项，附件最多 20 MB。\n\n${text}`:text),text_elements:[]}];
+    const memory=await memoryContext(join(this.dir,'workspace'));
+    const input=[{type:'text',text:memory+videoHint+(relay?`本轮微信发送命令：wxbot send --turn ${relay.turn}。文字通过 stdin 或参数传入；图片用 --image /workspace/图片.png，文件用 --file /workspace/文件.pdf，每次一项，附件最多 20 MB。\n\n${text}`:text),text_elements:[]}];
     if(images.length){
       for(const image of images){
         // Engine normally staged these before preview extraction. Direct harness

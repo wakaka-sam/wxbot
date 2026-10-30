@@ -142,3 +142,16 @@ CHROMIUM_EXECUTABLE=/path/to/chrome npm run test:browser
 删除其他助手的消息、任务、outbox、绑定映射及整个助手目录（包括旧凭据、会话和附件）。文件清理列表先持久化，意外中断后会重试清理。读取旧频道数据库失败时拒绝迁移，避免误删有连接的助手。迁移结束建立 user_id 唯一索引，后续注册在同一事务中创建账号及默认助手。备份只留在服务器受限目录，可用于回滚。
 
 手机端使用顶部助手栏和底部固定输入框，左上角菜单打开用户信息侧边栏；历史仍可在断开时查看，但不能提交消息或继续模型执行。
+
+
+## 工作区文件与用户记忆
+
+会话顶部「文件与记忆」提供两个页签。全部文件按目录浏览（每页 200 项），包括上传原件和助手产物；UTF-8 文本预览前 64 KB，PNG/JPEG/GIF/WebP 可预览，其他格式直接下载。下载流式传输完整原文件。目录符号链接、文件链接/硬链接及特殊设备不开放读取，平台凭据和 Codex 内部数据库不在工作区入口内。
+
+记忆页支持创建、编辑、删除 `/workspace/MEMORY.md`、`/workspace/AGENTS.md` 和 `/workspace/memory/` 下的 `.md` / `.txt` 文件，每个最多 32 KB。服务端每轮重新读取最新快照（总计最多 32 KB，超出时保留路径供按需读取），无需重启助手。删除记忆文件不删除对话历史；模型会收到当前没有该记忆的最新快照。这里管理的是用户可维护的工作区记忆文件，不是 Codex 内部自动记忆数据库。
+
+保存和删除携带内容版本，遇到其他页面或助手已修改时返回 409，保留编辑草稿供用户重新检查。修改或删除前在助手 `harness/memory-history` 保存原内容备份，备份不向工作区浏览器暴露；管理员可按需恢复。未保存离开会提示。普通工作区文件只读，避免误改执行产物；管理员查看他人工作区同样只读并记审计。
+
+接口均沿用会话 Cookie、同源与所有权校验：`GET files`、`GET files/preview`、`GET files/download`、`GET files/image`、`POST memory/save`、`POST memory/delete`，前缀为 `/api/assistants/:id/`。路径仅接受相对于该助手工作区的路径，服务端通过目录文件描述符和 no-follow 打开逐层校验，写入使用临时文件与原子替换。
+
+可在 sg 运行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-memory.mjs`，用临时合成记忆验证真实 Codex 在同一会话中读取修改后的新值，不发送微信消息。

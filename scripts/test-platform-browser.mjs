@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {saveMedia,describeMedia} from '../src/media.js';
 import {fixture} from '../test/platform/helpers.js';
-import {mkdir} from 'node:fs/promises';
+import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright');
@@ -61,6 +61,28 @@ r.input('','browser-attachments',[image,doc]);
 await page.locator('.attachment-preview').waitFor();assert.equal(await page.locator('.message.user').filter({has:page.locator('.attachment-preview')}).locator('.message-body').count(),0);await page.waitForFunction(()=>document.querySelector('.attachment-preview').naturalWidth>0);
 await page.waitForFunction(()=>[...document.querySelectorAll('.message.assistant.chat')].some(e=>e.textContent.includes('BROWSER-ATTACHMENT-CONTENT')));
 const downloaded=await page.evaluate(async()=>await(await fetch([...document.querySelectorAll('.message-attachment a')].find(a=>a.textContent.includes('微信资料.txt')).href)).text());assert.equal(downloaded,'BROWSER-ATTACHMENT-CONTENT');
+await page.click('#files-open');await page.locator('#files-dialog').waitFor();
+await page.locator('.file-row[data-path="incoming"]').click();await page.locator(`.file-row[data-path="incoming/${doc.id}.txt"]`).click();
+await page.waitForFunction(()=>document.querySelector('#file-text').textContent==='BROWSER-ATTACHMENT-CONTENT');
+assert.equal(await page.evaluate(async()=>await(await fetch(document.querySelector('#file-download').href)).text()),'BROWSER-ATTACHMENT-CONTENT');
+await page.click('#files-tab-memory');await page.locator('#memory-new').click();await page.fill('#memory-path','MEMORY.md');await page.locator('#memory-new-form button[type=submit]').click();await page.fill('#memory-editor','偏好简洁、使用中文');await page.click('#memory-save');
+await page.waitForFunction(()=>document.querySelector('#memory-dirty').textContent==='已保存'&&!document.querySelector('#file-detail').hidden);
+await page.locator('.file-row[data-path="MEMORY.md"]').waitFor();
+await page.fill('#memory-editor','未保存的草稿');page.once('dialog',d=>d.dismiss());await page.click('#files-close');assert.equal(await page.locator('#files-dialog').isVisible(),true);
+page.once('dialog',d=>d.accept());await page.click('#files-close');await page.click('#files-open');await page.click('#files-tab-memory');await page.locator('.file-row[data-path="MEMORY.md"]').click();
+await page.waitForFunction(()=>document.querySelector('#memory-editor').value==='偏好简洁、使用中文');
+const workspaceRoot=join(f.app.engine.runtimes.get(f.app.store.assistants(f.app.store.userByName('browseruser').id)[0].id).harness.options.dir,'workspace');
+await writeFile(join(workspaceRoot,'MEMORY.md'),'助手刚更新的记忆');await page.fill('#memory-editor','浏览器旧版本修改');await page.click('#memory-save');await page.locator('#files-error').waitFor();assert.match(await page.locator('#files-error').textContent(),/已被修改/);
+page.once('dialog',d=>d.accept());await page.click('#files-refresh');await page.locator('.file-row[data-path="MEMORY.md"]').click();await page.waitForFunction(()=>document.querySelector('#memory-editor').value==='助手刚更新的记忆');
+await page.screenshot({animations:'disabled',path:join(artifacts,'memory-desktop.png')});
+for(const width of [390,320]){
+ await page.setViewportSize({width,height:844});await page.click('#file-back');assert.equal(await page.locator('.files-directory').isVisible(),true);
+ await page.screenshot({animations:'disabled',path:join(artifacts,`files-mobile-${width}.png`)});
+ await page.locator('.file-row[data-path="MEMORY.md"]').click();await page.locator('#memory-editor').waitFor();
+ assert.equal(await page.evaluate(()=>document.querySelector('#files-dialog').scrollWidth>innerWidth),false);
+ await page.screenshot({animations:'disabled',path:join(artifacts,`memory-mobile-${width}.png`)});
+}
+await page.setViewportSize({width:1440,height:960});page.once('dialog',d=>d.accept());await page.click('#memory-delete');await page.waitForFunction(()=>document.querySelector('#file-detail').hidden);assert.equal(await page.locator('.file-row[data-path="MEMORY.md"]').count(),0);await page.click('#files-close');
 await page.screenshot({animations:'disabled',path:join(artifacts,'workspace.png')});
 await page.reload();await page.locator('.message.user').first().waitFor();
 for(const viewport of [{width:390,height:844},{width:320,height:568},{width:390,height:430}]){
@@ -78,7 +100,10 @@ await page.click('#pair-open');page.once('dialog',d=>d.accept());await page.clic
 await page.locator('#connection-gate').waitFor();await page.waitForFunction(()=>!document.querySelector('#pair-open').disabled);await page.screenshot({animations:'disabled',path:join(artifacts,'mobile-connect-required.png')});
 assert.equal(f.app.engine.runtimes.get(f.app.store.assistants(f.app.store.userByName('browseruser').id)[0].id).active,null);
 await page.setViewportSize({width:1440,height:960});
+await writeFile(join(workspaceRoot,'MEMORY.md'),'管理员只读检查');
 await page.click('#logout');await page.locator('#auth-view').waitFor({state:'visible'});await page.fill('#username','admin');await page.fill('#password','Admin-test-password-731');await page.click('#auth-submit');await page.click('#admin-nav');await page.locator('.admin-user',{hasText:'browseruser'}).click();await page.locator('#readonly-banner').waitFor({state:'visible'});assert.equal(await page.locator('#chat-form').isVisible(),false);await page.locator('.message.user').first().waitFor();await page.screenshot({animations:'disabled',path:join(artifacts,'admin.png')});
+await page.click('#files-open');await page.click('#files-tab-memory');await page.locator('.file-row[data-path="MEMORY.md"]').click();await page.waitForFunction(()=>document.querySelector('#file-text').textContent==='管理员只读检查');
+assert.equal(await page.locator('#memory-new').isVisible(),false);assert.equal(await page.locator('#memory-editor').isVisible(),false);assert.equal(await page.locator('#memory-actions').isVisible(),false);await page.click('#files-close');
 // The directory exposes user activity, live status, filters and mobile navigation.
 assert.match(await page.locator('#admin-user-detail').textContent(),/创建时间：.*最近使用：.*条消息/);
 assert.match(await page.locator('#chat-title').textContent(),/browseruser/);

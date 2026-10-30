@@ -1,3 +1,4 @@
+import {createFileBrowser} from './files.js';
 const $=s=>document.querySelector(s);
 function newRequestId(){
  if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
@@ -16,7 +17,9 @@ const date=new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'
 function node(tag,cls,text){const el=document.createElement(tag);if(cls)el.className=cls;if(text!=null)el.textContent=text;return el;}
 function toast(text){$('#toast').textContent=text;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,3500);}
 async function api(path,body){const res=await fetch('/api'+path,{method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json','X-Wxbot-Platform':'1'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(25000)});const data=await res.json();if(!res.ok){if(res.status===401&&user)showAuth();throw Object.assign(new Error(data.error||'请求失败'),{status:res.status,code:data.code,details:data.details});}return data;}
-function showAuth(){setSidebar(false);stream?.close();stream=null;user=null;selected=null;assistants=[];adminUsers=[];adminScope=null;adminFingerprint='';messages.clear();drafts.clear();selectionVersion++;for(const d of document.querySelectorAll('dialog[open]'))d.close();$('#app-view').hidden=true;$('#auth-view').hidden=false;$('#boot').hidden=true;$('#password').value='';}
+const fileBrowser=createFileBrowser({api,toast});
+$('#files-open').onclick=()=>{if(selected)fileBrowser.open(selected.id,readOnly||mode==='admin');};
+function showAuth(){fileBrowser.reset();setSidebar(false);stream?.close();stream=null;user=null;selected=null;assistants=[];adminUsers=[];adminScope=null;adminFingerprint='';messages.clear();drafts.clear();selectionVersion++;for(const d of document.querySelectorAll('dialog[open]'))d.close();$('#app-view').hidden=true;$('#auth-view').hidden=false;$('#boot').hidden=true;$('#password').value='';}
 function authTab(register){authMode=register?'register':'login';$('#login-tab').classList.toggle('selected',!register);$('#register-tab').classList.toggle('selected',register);$('#auth-submit').textContent=register?'注册':'登录';$('#password').autocomplete=register?'new-password':'current-password';$('#auth-error').hidden=true;}
 $('#login-tab').onclick=()=>authTab(false);$('#register-tab').onclick=()=>authTab(true);
 $('#auth-form').onsubmit=async e=>{e.preventDefault();$('#auth-submit').disabled=true;$('#auth-error').hidden=true;try{const d=await api(authMode==='login'?'/login':'/register',{username:$('#username').value.trim(),password:$('#password').value});await enter(d.user);}catch(error){$('#auth-error').hidden=false;$('#auth-error').textContent=error.message;}finally{$('#auth-submit').disabled=false;}};
@@ -26,7 +29,7 @@ function renderList(){const admin=mode==='admin';$('#main-content').classList.to
 function render(){renderList();renderChat();}
 const canChat=()=>Boolean(selected?.active&&selected.connection?.phase==='connected'&&selected.connection?.account?.userId);
 function renderChat(){
- renderAdminDetail();const empty=!selected;$('#chat-empty').hidden=!empty;$('#chat-content').hidden=empty;
+ renderAdminDetail();$('#files-open').hidden=!selected;const empty=!selected;$('#chat-empty').hidden=!empty;$('#chat-content').hidden=empty;
  if(empty){$('#chat-title').textContent=mode==='admin'?'用户与会话':'我的助手';$('#chat-subtitle').textContent='';$('#pair-open').hidden=true;$('#rename-open').hidden=true;return;}
  const a=selected,disabled=readOnly||mode==='admin',connected=canChat();
  $('#chat-title').textContent=mode==='admin'?`${adminUsers.find(u=>u.id===adminScope)?.username||'用户'} · ${a.name}`:a.name;$('#chat-subtitle').textContent=phaseNames[a.connection.phase]||a.connection.phase;
