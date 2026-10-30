@@ -68,6 +68,18 @@ export class Engine extends EventEmitter {
   }
   snapshot(id){const a=this.store.assistant(id),r=this.runtimes.get(id);return {...a,active:Boolean(a.active),running:Boolean(r?.active),pending:this.store.pending(id).length,lastWechatMessageSeq:this.store.lastWechatMessageSeq(id),connection:r?.channel.snapshot()||{phase:'offline',detail:'助手尚未激活',qr:null,account:null},deliveryErrors:this.store.deliveryErrors(id)};}
   list(userId){return this.store.assistants(userId).map(a=>{const s=this.snapshot(a.id);return {...s,connection:{...s.connection,qr:undefined}};});}
+  adminUsers(){
+    const assistants=new Map(this.store.assistants().map(a=>[a.user_id,a]));
+    const stats=new Map(this.store.conversationStats().map(s=>[s.assistant_id,s]));
+    return this.store.users().map(u=>{
+      const a=assistants.get(u.id),runtime=a&&this.runtimes.get(a.id),connection=runtime?.channel.snapshot();
+      const linked=Boolean(connection?.account?.userId),connected=Boolean(a?.active&&linked&&connection.phase==='connected');
+      const phase=connection?.phase==='connected'&&!connected?'offline':connection?.phase||'offline';
+      return {...u,assistantId:a?.id||null,assistantName:a?.name||null,
+        messageCount:stats.get(a?.id)?.messageCount||0,lastUsedAt:stats.get(a?.id)?.lastUsedAt||null,
+        running:Boolean(runtime?.active),wechat:{phase,connected,linked}};
+    });
+  }
   async lock(userId,fn){const previous=this.locks.get(userId)||Promise.resolve();const next=previous.catch(()=>{}).then(fn);this.locks.set(userId,next);try{return await next;}finally{if(this.locks.get(userId)===next)this.locks.delete(userId);}}
   async activate(id,user,stopId){return this.lock(user.id,async()=>{
     const {stopped}=this.store.activate(id,user,stopId);

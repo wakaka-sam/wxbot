@@ -60,7 +60,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    if(path.startsWith('/api/admin/')){
     if(user.role!=='admin')throw new AppError(403,'需要管理员权限');
     if(req.method!=='GET')throw new AppError(405,'管理员视图只读');
-    if(path==='/api/admin/users')return send(200,{users:store.users()});
+    if(path==='/api/admin/users')return send(200,{users:engine.adminUsers()});
     const match=path.match(/^\/api\/admin\/users\/([a-f0-9-]+)\/assistants$/);
     if(match){store.audit(user.id,'view-user',match[1]);return send(200,{user:store.user(match[1]),assistants:engine.list(match[1])});}
     throw new AppError(404,'接口不存在');

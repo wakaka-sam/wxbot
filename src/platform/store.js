@@ -34,6 +34,9 @@ export class PlatformStore {
     return this.user(id);
   }
   users() { return this.db.prepare(`SELECT u.id,u.username,u.role,u.created_at,COUNT(a.id) AS assistants,COALESCE(SUM(a.active),0) AS active FROM users u LEFT JOIN assistants a ON a.user_id=u.id GROUP BY u.id ORDER BY u.created_at`).all(); }
+  conversationStats() { return this.db.prepare(`SELECT assistant_id,COUNT(*) AS messageCount,
+    MAX(CASE WHEN role='user' THEN created_at END) AS lastUsedAt
+    FROM messages GROUP BY assistant_id`).all(); }
   audit(actor,action,target) { this.db.prepare('INSERT INTO audit(actor_id,action,target_id,created_at) VALUES(?,?,?,?)').run(actor,action,target,now()); }
   set(key,value) { this.db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)').run(key,JSON.stringify(value)); }
   get(key) { const row=this.db.prepare('SELECT value FROM settings WHERE key=?').get(key); return row?JSON.parse(row.value):null; }

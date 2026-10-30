@@ -79,6 +79,36 @@ await page.locator('#connection-gate').waitFor();await page.waitForFunction(()=>
 assert.equal(f.app.engine.runtimes.get(f.app.store.assistants(f.app.store.userByName('browseruser').id)[0].id).active,null);
 await page.setViewportSize({width:1440,height:960});
 await page.click('#logout');await page.locator('#auth-view').waitFor({state:'visible'});await page.fill('#username','admin');await page.fill('#password','Admin-test-password-731');await page.click('#auth-submit');await page.click('#admin-nav');await page.locator('.admin-user',{hasText:'browseruser'}).click();await page.locator('#readonly-banner').waitFor({state:'visible'});assert.equal(await page.locator('#chat-form').isVisible(),false);await page.locator('.message.user').first().waitFor();await page.screenshot({animations:'disabled',path:join(artifacts,'admin.png')});
+// The directory exposes user activity, live status, filters and mobile navigation.
+assert.match(await page.locator('#admin-user-detail').textContent(),/创建时间：.*最近使用：.*条消息/);
+assert.match(await page.locator('#chat-title').textContent(),/browseruser/);
+assert.equal(await page.locator('.message.user .message-meta span').first().textContent(),'browseruser');
+await page.fill('#admin-search','no-such-user');await page.locator('#admin-empty').waitFor();
+await page.fill('#admin-search','browseruser');assert.equal(await page.locator('.admin-user').count(),1);
+await page.selectOption('#admin-filter','connected');await page.locator('#admin-empty').waitFor();
+await r.pair({id:'browser-bot',userId:'owner'});await page.click('#admin-refresh');await page.locator('.admin-user .wechat-badge.online').waitFor();
+assert.equal(await page.locator('#admin-connected').textContent(),'1');
+r.state.phase='reconnecting';r.emitState();await page.locator('#admin-empty').waitFor();
+await page.selectOption('#admin-filter','all');await page.locator('.admin-user .wechat-badge.pending').waitFor();
+await page.fill('#admin-search','');await page.selectOption('#admin-sort','name');assert.match(await page.locator('.admin-user').first().textContent(),/admin/);
+await page.selectOption('#admin-sort','recent');assert.match(await page.locator('.admin-user').first().textContent(),/browseruser/);
+assert.match(await page.locator('.admin-user').filter({hasText:'admin'}).textContent(),/尚未使用/);
+await page.route('**/api/admin/users',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'temporarily unavailable'})}));
+await page.click('#admin-refresh');await page.locator('#admin-users-panel.stale').waitFor();
+assert.match(await page.locator('#admin-refresh-status').textContent(),/更新失败/);assert.equal(await page.locator('.admin-user').count(),2);
+await page.unroute('**/api/admin/users');await page.click('#admin-refresh');await page.waitForFunction(()=>!document.querySelector('#admin-users-panel').classList.contains('stale'));
+await page.screenshot({animations:'disabled',path:join(artifacts,'admin.png')});
+for(const width of [390,320]){
+ await page.setViewportSize({width,height:844});await page.click('#admin-back');await page.locator('#admin-users-panel').waitFor();
+ assert.equal(await page.locator('.chat-panel').isVisible(),false);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.screenshot({animations:'disabled',path:join(artifacts,`admin-directory-${width}.png`)});
+ await page.locator('.admin-user',{hasText:'browseruser'}).click();await page.locator('#readonly-banner').waitFor();
+ assert.equal(await page.locator('#admin-users-panel').isVisible(),false);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.screenshot({animations:'disabled',path:join(artifacts,`admin-conversation-${width}.png`)});
+}
+await page.setViewportSize({width:1440,height:960});
 await page.click('#password-open');await page.fill('#old-password','Admin-test-password-731');await page.fill('#new-password','New-admin-password-731');await page.click('#password-form button[type=submit]');await page.locator('#password-dialog').waitFor({state:'hidden'});
 assert.deepEqual(errors,[]);console.log('BROWSER_PASS external-link/register/default-assistant/wechat-gate/interrupt/QR/pair/web-mirror/image-preview/attachment-download/history/mobile/drawer/disconnect/admin/password; JS errors=0');
 }finally{await browser.close();await new Promise(resolve=>external.close(resolve));await f.close();}
