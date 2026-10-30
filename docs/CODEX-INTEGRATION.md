@@ -58,4 +58,6 @@ CLI 人工入口目前针对本机消息台，不能拿平台用户 Cookie 在�
 
 助手使用 `/home/assistant/.local/share/wxbot-tools/browser.cjs` 的 `openBrowser()`，取得 `{browser, context, page, omitted}`。它保留 Codex 代理、关闭 Service Worker，并仅中止发往 `rum.battlenet.com.cn` 的非导航 HTTP(S) 请求，避免该失效附属域名的 DNS 错误被 Codex 误归类为内网访问后终止整条命令。主页面、登录及其他域名继续接受原网络策略；不伪造请求成功，也不把此规则泛化为忽略所有网络错误。新页面应从返回的 `context` 创建，结束后关闭 `browser`。
 
-这是浏览器侧对已知失效请求的兼容处理，不是修改 Codex 的 DNS 错误分类。已有脚本如果直接启动 Playwright，需要改用该封装；助手启动/恢复时会获得更新后的使用指引。`scripts/test-platform-battlenet.mjs` 在独立临时会话中验证附属请求失败容错及原始战网页面访问，不使用生产用户的浏览器或登录信息。
+这是浏览器侧对已知失效请求的兼容处理，不是修改 Codex 的 DNS 错误分类。助手命令环境通过 `NODE_OPTIONS` 预加载兼容层，因此旧脚本直接 `require('playwright')` 或 `require('playwright-core')` 再启动 Chromium 时，也会在创建页面前安装同样的处理；不改写用户脚本、代理或启动参数。普通 Node 命令不会加载 Playwright。新脚本继续推荐使用 `openBrowser()`。助手启动/恢复时获得更新后的环境和使用指引。`scripts/test-platform-battlenet.mjs` 在独立临时会话中验证附属请求失败容错及原始战网页面访问，不使用生产用户的浏览器或登录信息。
+
+设置 `PLATFORM_BROWSER_LEGACY_TEST=1 PLATFORM_BROWSER_MODEL_TEST=1` 可验证旧式 `browser.newPage()`、恢复原线程后直接重跑原样旧脚本、文件未被改写，以及网络/凭据隔离继续生效。

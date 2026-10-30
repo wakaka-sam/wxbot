@@ -18,7 +18,7 @@ export async function installSendTools(home, { visibleHome = home, node = proces
   // the shared model credential. Codex discovers this standard user skill root.
   const skill = join(home, '.agents', 'skills', 'wxbot-send');
   for (const dir of [tools, bin, relayRoot, skill]) await mkdir(dir, { recursive: true, mode: 0o700 });
-  for (const name of ['cli.js', 'send-client.js', 'browser.cjs']) await writeFile(join(tools, name), await readFile(new URL(name, import.meta.url)), { mode: 0o600 });
+  for (const name of ['cli.js', 'send-client.js', 'browser.cjs', 'browser-preload.cjs']) await writeFile(join(tools, name), await readFile(new URL(name, import.meta.url)), { mode: 0o600 });
   await writeFile(join(tools, 'package.json'), '{"type":"module"}\n', { mode: 0o600 });
   const visibleCli = join(visibleHome, '.local', 'share', 'wxbot-tools', 'cli.js');
   const visibleRelay = join(visibleHome, '.local', 'share', 'wxbot-send');

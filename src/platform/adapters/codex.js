@@ -51,7 +51,7 @@ export class CodexHarness {
     const listener=net.createServer();await new Promise((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',resolve);});
     const proxyPort=listener.address().port;await new Promise(resolve=>listener.close(resolve));
     await writeFile(join(home,'.codex','config.toml'),agentConfig(this.model,proxyPort),{mode:0o600});
-    let command=this.command,args=[],cwd=workspace,env={PATH:'/home/assistant/.local/bin:/usr/local/bin:/usr/bin:/bin',HOME:home,CODEX_HOME:join(home,'.codex'),LANG:'C.UTF-8',NODE_PATH:'/opt/wxbot-agent-tools/node_modules',PLAYWRIGHT_BROWSERS_PATH:'/opt/wxbot-agent-tools/browsers'};
+    let command=this.command,args=[],cwd=workspace,env={PATH:'/home/assistant/.local/bin:/usr/local/bin:/usr/bin:/bin',HOME:home,CODEX_HOME:join(home,'.codex'),LANG:'C.UTF-8',NODE_PATH:'/opt/wxbot-agent-tools/node_modules',NODE_OPTIONS:'--require=/home/assistant/.local/share/wxbot-tools/browser-preload.cjs',PLAYWRIGHT_BROWSERS_PATH:'/opt/wxbot-agent-tools/browsers'};
     if(this.isolated){
       command=process.env.PLATFORM_BWRAP||'/root/.local/bin/bwrap';
       if(!existsSync(command))throw new Error('平台需要 bubblewrap 隔离执行器；未启动不隔离的替代进程');
