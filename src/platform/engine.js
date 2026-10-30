@@ -230,13 +230,13 @@ export class Engine extends EventEmitter {
         const a=this.store.assistant(id);await r.harness.prepare({threadId:a.thread_id,onThread:thread=>this.store.thread(id,thread)});
         if(this.closed||!this.store.assistant(id)?.active||!this.connected(id))throw Object.assign(new Error('助手已停止'),{code:'interrupted'});
         const attachments=selected.flatMap(j=>this.store.message(j.message_id)?.attachments||[]);
-        const prepared=await prepareAttachments(attachments,a=>r.channel.readAttachment(a),{signal:run.inputAbort.signal});
+        const prepared=await prepareAttachments(attachments,a=>r.channel.readAttachment(a),{signal:run.inputAbort.signal,stage:(file,options)=>r.harness.stageAttachment(file,options)});
         if(run.interrupted||this.closed)throw Object.assign(new Error('本轮已中断'),{code:'interrupted'});
         if(prepared.notices.length){
           const m=this.store.addMessage(id,{role:'system',kind:'status',text:'附件处理提示：\n'+prepared.notices.join('\n'),jobId:job.id});
           this.publish(id,'message',m);this.enqueueText(id,m.text,`attachment-status:${job.id}`);
         }
-        const prompt=[selected.map(j=>j.prompt).join('\n\n[后续输入]\n'),prepared.text,prepared.notices.length?'附件读取说明（请勿声称已读取未成功解析的内容）：\n'+prepared.notices.join('\n'):''].filter(Boolean).join('\n\n');
+        const prompt=[selected.map(j=>j.prompt).join('\n\n[后续输入]\n'),prepared.text,prepared.notices.length?'附件预览说明（预览不等于完整内容，有原文件路径时可直接读取；不要编造未读取内容）：\n'+prepared.notices.join('\n'):''].filter(Boolean).join('\n\n');
         run.submitted=true;
         const task=r.harness.run({text:prompt,images:prepared.images,onSend:request=>this.sendFromTool(id,run,sendBinding,request),onEvent:event=>{
           if(r.active!==run)return;

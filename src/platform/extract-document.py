@@ -66,4 +66,4 @@ try:
 except FileNotFoundError:
     print(json.dumps({'error': '服务器缺少文档解析工具，请联系管理员安装 poppler-utils'}))
 except Exception:
-    print(json.dumps({'error': '文档损坏、加密、过大或无法解析，请转换为文本或图片后重发'}))
+    print(json.dumps({'error': '文档损坏、加密、过大或无法生成自动文字预览'}))

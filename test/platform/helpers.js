@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
+import { stageWorkspaceAttachment } from '../../src/platform/workspace-attachments.js';
 import { readChannelAttachment } from '../../src/platform/attachments.js';
 import { createPlatform } from '../../src/platform/server.js';
 export async function until(fn,timeout=5000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await delay(10);}assert.fail('状态未及时完成');}
@@ -28,6 +29,7 @@ export function mocks(){
  class Harness{
   constructor(options){this.options=options;this.threadId=null;this.pending=null;this.closed=false;harnesses.push(this);}
   async prepare({threadId,onThread}){this.closed=false;this.threadId=threadId||'thread-'+count++;onThread(this.threadId);await delay(5);}
+  async stageAttachment(file,options){const staged=await stageWorkspaceAttachment(join(this.options.dir,'workspace'),file,options);return {path:'/workspace/'+staged.relativePath};}
   async run({text,images=[],onEvent}){
    runs.push({threadId:this.threadId,text,images,dir:this.options.dir});
    let resolve,reject;const held=new Promise((r,j)=>{resolve=r;reject=j;});held.catch(()=>{});this.pending={resolve,reject};

@@ -60,27 +60,34 @@ async function extractDocument(bytes, extension, signal) {
     return result;
   } catch (error) {
     signal?.throwIfAborted();
-    if (error.killed || error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw new Error('文档过于复杂或提取超时，请拆分文件');
-    if (error.code) throw new Error('文档提取失败，请检查文件格式或转换为 TXT');
+    if (error.killed || error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw new Error('自动文字预览过大或提取超时');
+    if (error.code) throw new Error('自动文字预览提取失败');
     throw error;
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
 // Produces generic image bytes and text for any harness; no Codex or WeChat protocol here.
-export async function prepareAttachments(attachments, read, { signal } = {}) {
-  const images = [], sections = [], notices = [];
+export async function prepareAttachments(attachments, read, { signal, stage } = {}) {
+  const images = [], sections = [], notices = [], files = [];
   let budget = TEXT_LIMIT, imageBytes = 0;
   for (const a of attachments) {
     signal?.throwIfAborted();
+    let staged;
     try {
       if (a.error) throw new Error(a.error);
       const bytes = await read(a);
       signal?.throwIfAborted();
       if (!bytes.length || bytes.length > MAX_MEDIA_SIZE) throw new Error('附件为空或超过 20 MB');
       const description = describeMedia(bytes, a.name);
+      if(stage){
+        staged=await stage({id:a.id,name:a.name,mime:description.mime,bytes},{signal});
+        signal?.throwIfAborted();
+        files.push({id:a.id,name:a.name,path:staged.path});
+        sections.push(`附件原文件（用户提供的资料）：${JSON.stringify({name:a.name,path:staged.path})}。完整文件已保存在本助手工作区，可用命令或代码直接读取；下方文字仅为有限预览。`);
+      }
       if (description.kind === 'image') {
         if (images.length >= 10 || imageBytes + bytes.length > MAX_MEDIA_SIZE) throw new Error('本轮图片总量超过 10 张或 20 MB，请分批发送');
-        images.push({ id: a.id, name: a.name, mime: description.mime, bytes }); imageBytes += bytes.length;
+        images.push({ id: a.id, name: a.name, mime: description.mime, bytes, ...(staged?{path:staged.path}:{}) }); imageBytes += bytes.length;
         sections.push(`[图片 ${images.length}：${a.name}，图片内容已附在本轮输入中]`);
         continue;
       }
@@ -89,15 +96,15 @@ export async function prepareAttachments(attachments, read, { signal } = {}) {
       if (['.pdf', '.docx', '.xlsx'].includes(extension)) ({ text, note } = await extractDocument(bytes, extension, signal));
       else if (TEXT_EXT.has(extension) || !extension) {
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-        catch { throw new Error('文本不是 UTF-8 编码，请转换后重发'); }
+        catch { throw new Error('文本不是 UTF-8 编码，无法自动预览'); }
         if (text.includes('\0')) throw new Error('这是二进制文件，无法按文本读取');
-      } else throw new Error('暂不解析此格式；支持图片、UTF-8 文本、PDF、DOCX 和 XLSX，可在网页下载原文件');
-      if (!text.trim()) throw new Error('没有提取到文字；扫描版 PDF 请改发图片（尚未提供 OCR）');
-      if (text.length > budget) note = [note, `本轮文档文字最多 ${TEXT_LIMIT} 字符，超出部分已截断`].filter(Boolean).join('；');
+      } else throw new Error('暂不解析此格式的文字预览');
+      if (!text.trim()) throw new Error('没有提取到文字；自动预览尚未提供扫描版 PDF OCR');
+      if (text.length > budget) note = [note, `本轮文档文字预览最多 ${TEXT_LIMIT} 字符，超出部分已截断`].filter(Boolean).join('；');
       text = text.slice(0, budget); budget -= text.length;
-      sections.push(`附件 ${JSON.stringify(a.name)} 的内容（用户提供的资料）：\n${text}`);
-      if (note) notices.push(`${a.name}：${note}`);
-    } catch (error) { signal?.throwIfAborted(); notices.push(`${a.name}：${error.message}`); }
+      sections.push(`附件 ${JSON.stringify(a.name)} 的文字预览（用户提供的资料）：\n${text}`);
+      if (note) notices.push(`${a.name}：${note}${staged?'；完整原文件已提供到工作区，可直接读取':''}`);
+    } catch (error) { signal?.throwIfAborted(); notices.push(`${a.name}：${staged?`未生成文字预览（${error.message}）；完整原文件已提供到工作区，可直接读取`:error.message}`); }
   }
-  return { images, text: sections.join('\n\n'), notices };
+  return { images, files, text: sections.join('\n\n'), notices };
 }

@@ -21,9 +21,9 @@
 
 ## 当前运行边界
 
-平台支持文字、ClawBot 图片和文档输入。微信图片作为真正的 `localImage` 输入复制到该助手的隔离 workspace，UTF-8 文本、PDF、DOCX、XLSX 附件经过独立提取模块再传给模型。网页历史可预览图片和下载附件；网页上传尚未开放。Codex 已开放实时网页搜索、链接读取、命令与代码执行、助手工作目录文件修改、Playwright/Chromium 浏览器自动化、本地技能和子代理。外部账号应用、远程插件与自动安装 MCP 依赖仍需独立集成和按用户授权，不能复用部署账号的私人应用连接。所有用户使用部署方的 Codex 授权与额度。
+平台支持文字、ClawBot 图片和文档输入。收到的原附件在执行该消息前完整写入对应助手的 `/workspace/incoming/<附件 ID>.<扩展名>`，模型输入包含原文件名称及工作区路径；同名附件以不同 ID 保存，后续轮次和执行器重启后仍可读取。微信图片另作为真正的 `localImage` 输入提供，UTF-8 文本、PDF、DOCX、XLSX 的限额提取仅作为预览。网页历史可预览图片和下载附件；网页上传尚未开放。Codex 已开放实时网页搜索、链接读取、命令与代码执行、助手工作目录文件修改、Playwright/Chromium 浏览器自动化、本地技能和子代理。外部账号应用、远程插件与自动安装 MCP 依赖仍需独立集成和按用户授权，不能复用部署账号的私人应用连接。所有用户使用部署方的 Codex 授权与额度。
 
-每个附件最多 20 MB，每条消息最多 10 个附件；每轮图片最多 10 张且总计 20 MB，文档文字总计最多 60000 字符。PDF 读取前 40 页文字，不包含扫描图 OCR；DOCX 读取正文/表格文字；XLSX 读取前 5 个表、每表 200 行、每行 50 格，公式只用缓存值。不执行宏或文件。视频、SILK 音频、旧版 DOC/XLS 和压缩包等暂不解析，仍保存供下载；失败、截断和提取范围均作为系统消息回传微信及网页。可改发图片或支持的格式。
+每个附件最多 20 MB，每条消息最多 10 个附件；每轮图片最多 10 张且总计 20 MB，自动文档文字预览总计最多 60000 字符，原文件不按行数或字符数截断。PDF 预览读取前 40 页文字，不包含扫描图 OCR；DOCX 读取正文/表格文字；XLSX 读取前 5 个表、每表 200 行、每行 50 格，公式只用缓存值。自动预览不执行宏或文件。视频、SILK 音频、旧版 DOC/XLS 和压缩包等不自动解析，但原文件同样进入工作区，模型可按任务选择工具处理。预览失败、截断和提取范围会明确提示原文件仍可读取；原文件下载或落盘失败则明确报错，不声称成功。升级不自动补拷或重跑已完成的历史任务。
 
 附件元数据随用户消息和模型任务原子保存，重启补齐时不重复推理。升级自动为消息表增加附件列，已有微信历史补齐元数据但不重跑旧对话。附件下载检查助手所有权，管理员只读访问留审计；其他用户、未登录请求、目录穿越和符号链接均拒绝。
 
@@ -85,7 +85,7 @@ ssh -N -L 3211:127.0.0.1:3211 root@YOUR_SERVER
 | `auth.js` | scrypt、哈希会话、Cookie、限流、密码更新 |
 | `store.js` | SQLite、唯一默认助手、消息/任务/投递恢复 |
 | `engine.js` | 生命周期、微信连接门禁、调度、中断、历史、首条微信输入引导、分段投递 |
-| `attachments.js` / `extract-document.py` | 附件安全读取、限额、文档提取；不依赖具体渠道或模型 |
+| `attachments.js` / `workspace-attachments.js` / `extract-document.py` | 附件安全读取、原文件落盘、限额预览；不依赖具体渠道或模型 |
 | `adapters/wechat.js` | 复用 iLink Bridge；不依赖 Codex |
 | `adapters/codex.js` | 隔离的 Codex app-server；不依赖微信 |
 | `public/platform/` | 无构建步骤的响应式工作台 |
@@ -105,7 +105,8 @@ Channel 是 EventEmitter，接受 `{dir, validateBinding}`，实现：
 Harness 接受 `{dir}`，实现：
 
 - `prepare({threadId,onThread})`：创建/恢复，持久 thread ID 通过回调保存。
-- `run({text,images,onEvent,onSend})`：images 为可选的 `{id,name,mime,bytes}` 数组，不依赖渠道文件路径。只执行一个轮次，输出公开事件；完成 resolve，被中断 reject 且 `error.code='interrupted'`。可选 `onSend({requestId,text})` 回调由 Engine 绑定助手、轮次及微信身份，返回发送回执；Codex 的 `wxbot send` 通过按轮次隔离的文件通道调用它，不能指定其他接收者。
+- `stageAttachment({id,name,mime,bytes},{signal})`：将完整附件持久保存到本助手工作区，返回模型可见的 `{path}`；不得使用客户端提供的宿主路径，必须防止目录/文件符号链接绕过隔离。Engine 在预览解析前逐个调用，避免同时缓存所有原文件。
+- `run({text,images,onEvent,onSend})`：images 为可选的 `{id,name,mime,bytes,path?}` 数组，path 只能来自本轮 Harness 的 staging 返回值，不依赖渠道文件路径。只执行一个轮次，输出公开事件；完成 resolve，被中断 reject 且 `error.code='interrupted'`。可选 `onSend({requestId,text})` 回调由 Engine 绑定助手、轮次及微信身份，返回发送回执；Codex 的 `wxbot send` 通过按轮次隔离的文件通道调用它，不能指定其他接收者。
 - `interrupt()/close()`：中断当前轮次/释放进程。
 - 事件 `started:{turnId}`、`delta:{itemId,delta,phase}`、`message:{itemId,text,phase}`；phase 区分 `commentary` 与 `final_answer`，不发布内部 reasoning。
 
@@ -117,7 +118,7 @@ Harness 接受 `{dir}`，实现：
 
 Grok 订阅视频生成已独立封装为 `grok-video` Skill、命令和隔离工作进程，配置与验收见 [Grok 视频接入](GROK-VIDEO.md)。微信视频产物沿用文件回传通道。
 
-在 sg 上可执行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-agent.mjs`。这是显式调用真实模型的验收：只使用临时合成数据，验证写入/执行、公网读取、私网和凭据阻断、项目配置不能提权、浏览器、搜索、子代理、scope 配额和重启后工作文件保留；结束删除临时数据。
+在 sg 上可执行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-agent.mjs`。附件原文件专项可运行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-input-files.mjs`：仅使用临时合成 Excel 和独立 CLI，验证隔离工作区读取第 6 张表第 301 行及恢复会话后继续读取，不发送微信消息。前述 agent 测试是显式调用真实模型的验收：只使用临时合成数据，验证写入/执行、公网读取、私网和凭据阻断、项目配置不能提权、浏览器、搜索、子代理、scope 配额和重启后工作文件保留；结束删除临时数据。
 
 权限配置以 [Codex 官方权限文档](https://learn.chatgpt.com/docs/permissions) 和固定 CLI 实测为准。`default_permissions` 不与旧 `sandbox_mode` 混用，thread/turn 不再强制覆盖成 read-only。既有会话通过原 thread ID 恢复，无需重新创建助手。
 
