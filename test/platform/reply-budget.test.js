@@ -94,8 +94,8 @@ test('平台保留超额 outbox 且不忙循环；网页输入不重置，CLI �
     assert.equal(store.deliveries(assistant.id).length,0);
     assert.equal(r.channel.snapshot().replyBudget.remaining,6);
     // Pending progress from before deployment is suppressed too.
-    engine.enqueueText(assistant.id,'正在执行命令…','old-progress');
-    await until(()=>!r.delivering);assert.equal(sent.length,14);
+    for(const text of ['正在执行命令…','正在查询网页…','正在修改工作文件…','正在与子代理协作…','正在调用工具…'])engine.enqueueText(assistant.id,text,`old-progress:${text}`);
+    await until(()=>!r.delivering);assert.equal(sent.length,14);assert.equal(store.deliveries(assistant.id).length,0);assert.equal(r.channel.snapshot().replyBudget.remaining,6);
   }finally{await engine.close();store.close();await rm(dir,{recursive:true,force:true});}
 });
 

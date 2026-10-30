@@ -8,6 +8,8 @@ import { WechatChannel } from './adapters/wechat.js';
 import { CodexHarness } from './adapters/codex.js';
 import { normalizeAttachments, prepareAttachments } from './attachments.js';
 import { validateSend, sendHash } from '../send-client.js';
+// Also discard tool-status notifications queued by older deployments.
+const TOOL_STATUS_TEXTS=new Set(['正在执行命令…','正在修改工作文件…','正在查询网页…','正在与子代理协作…','正在调用工具…']);
 const uuidFor=value=>{const h=createHash('sha256').update(value).digest('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;};
 export class Engine extends EventEmitter {
   constructor(store,dir,{channelFactory=o=>new WechatChannel(o),harnessFactory=o=>new CodexHarness(o),publishDownload}={}){
@@ -177,7 +179,7 @@ export class Engine extends EventEmitter {
       for(const row of this.store.deliveries(id)){
         if(this.closed||!this.store.assistant(id)?.active||!this.connected(id))break;
         const p=JSON.parse(row.payload);
-        if(!p.attachment&&p.text.trim()==='正在执行命令…'){this.store.deliveryState(row.id,'skipped');continue;}
+        if(!p.attachment&&TOOL_STATUS_TEXTS.has(p.text.trim())){this.store.deliveryState(row.id,'skipped');continue;}
         this.store.deliveryState(row.id,'sending');
         try{const result=p.attachment?await r.channel.sendAttachment(p.attachment,row.id,p.binding):await r.channel.send(p.text,row.id,p.binding);
           if(result.status==='blocked'){
@@ -214,7 +216,7 @@ export class Engine extends EventEmitter {
       const jobs=this.store.pending(id);if(!jobs.length)break;
       const selected=jobs[0].kind==='summary'?[jobs[0]]:jobs.filter(j=>j.kind==='chat').slice(0,20);
       const job=selected[0];for(const j of selected)this.store.jobState(j.id,'running');
-      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id,activities:new Set(),explicitTexts:new Set()};this.publish(id,'assistant',this.snapshot(id));
+      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id,explicitTexts:new Set()};this.publish(id,'assistant',this.snapshot(id));
       const sendBinding=r.channel.snapshot().account;
       const sendMessage=(item,complete=false)=>{
         // Keep blank lines inside a single completed message. textDeliveries
@@ -242,11 +244,7 @@ export class Engine extends EventEmitter {
           if(r.active!==run)return;
           if(event.type==='started'){if(run.interrupted||!this.connected(id))void r.harness.interrupt().catch(()=>{});return;}
           if(run.interrupted||!this.connected(id))return;
-          if(event.type==='activity'){
-            if(run.activities.has(event.itemId))return;run.activities.add(event.itemId);
-            const m=this.store.addMessage(id,{role:'assistant',kind:'progress',text:event.text,source:'harness',jobId:job.id});
-            this.publish(id,'message',m);if(event.activityType!=='commandExecution'&&m.text.trim()!=='正在执行命令…')this.enqueueText(id,m.text,`activity:${m.id}`);return;
-          }
+          // Tool lifecycle events are internal; only assistant messages reach users.
           if(!['delta','message'].includes(event.type))return;
           let item=run.items.get(event.itemId);
           if(!item){const kind=job.kind==='summary'?'summary':event.phase==='commentary'?'progress':'chat';const m=this.store.addMessage(id,{role:'assistant',kind,state:'streaming',source:'harness',jobId:job.id});item={id:m.id,text:'',sent:0,phase:event.phase};run.items.set(event.itemId,item);}
