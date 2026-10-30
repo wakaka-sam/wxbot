@@ -118,7 +118,7 @@ Harness 接受 `{dir}`，实现：
 
 Grok 订阅视频生成已独立封装为 `grok-video` Skill、命令和隔离工作进程，配置与验收见 [Grok 视频接入](GROK-VIDEO.md)。微信视频产物沿用文件回传通道。
 
-在 sg 上可执行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-agent.mjs`。附件原文件专项可运行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-input-files.mjs`：仅使用临时合成 Excel 和独立 CLI，验证隔离工作区读取第 6 张表第 301 行及恢复会话后继续读取，不发送微信消息。前述 agent 测试是显式调用真实模型的验收：只使用临时合成数据，验证写入/执行、公网读取、私网和凭据阻断、项目配置不能提权、浏览器、搜索、子代理、scope 配额和重启后工作文件保留；结束删除临时数据。
+在 sg 上可执行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-agent.mjs`。附件原文件专项可运行 `PLATFORM_AGENT_TEST=1 node --env-file=/etc/wxbot-platform.env scripts/test-platform-input-files.mjs`：仅使用临时合成 Excel 和独立 CLI/真实模型轮次，验证隔离工作区读取第 6 张表第 301 行及恢复会话后继续读取，不发送微信消息。前述 agent 测试是显式调用真实模型的验收：只使用临时合成数据，验证写入/执行、公网读取、私网和凭据阻断、项目配置不能提权、浏览器、搜索、子代理、scope 配额和重启后工作文件保留；结束删除临时数据。
 
 权限配置以 [Codex 官方权限文档](https://learn.chatgpt.com/docs/permissions) 和固定 CLI 实测为准。`default_permissions` 不与旧 `sandbox_mode` 混用，thread/turn 不再强制覆盖成 read-only。既有会话通过原 thread ID 恢复，无需重新创建助手。
 

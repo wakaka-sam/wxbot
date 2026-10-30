@@ -1,4 +1,4 @@
-// Opt-in SG CLI test: synthetic files and a temporary assistant only. No WeChat sends.
+// Opt-in SG CLI/model test: synthetic files and a temporary assistant only. No WeChat sends.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -33,7 +33,12 @@ w.save(sys.argv[1])`,source]);
   const r=await harness.client.request('command/exec',{command:['/usr/bin/python3','-c',"import openpyxl,sys,json;w=openpyxl.load_workbook(sys.argv[1],read_only=True);print(json.dumps({'sheets':len(w.sheetnames),'rows':w.worksheets[5].max_row,'tail':w.worksheets[5]['B301'].value}))",path],cwd:'/workspace',timeoutMs:20000});
   assert.equal(r.exitCode,0,r.stderr);assert.deepEqual(JSON.parse(r.stdout),{sheets:6,rows:301,tail:'FULL-FILE-END-6'});
  };
- await read();await harness.close();
+ await read();
+ // A thread becomes resumable after its first persisted turn. Also verify that
+ // the model follows the file path instead of treating the preview as complete.
+ const answer=await harness.run({text:prepared.text+'\n\n请实际运行 Python 读取原始 Excel 第 6 个工作表的 B301 单元格，只回复单元格的值，不需要其他操作。',onEvent:()=>{}});
+ assert.match(answer.text,/FULL-FILE-END-6/);
+ await harness.close();
  harness=new CodexHarness({dir:join(dir,'assistant')});await harness.prepare({threadId,onThread:id=>assert.equal(id,threadId)});await read();
- console.log(JSON.stringify({originalBytes:'preserved',preview:'bounded',isolatedCliRead:'passed',sixthSheetRow301:'passed',resume:'passed',wechatMessagesSent:0}));
+ console.log(JSON.stringify({originalBytes:'preserved',preview:'bounded',isolatedCliRead:'passed',modelRead:'passed',sixthSheetRow301:'passed',resume:'passed',wechatMessagesSent:0}));
 }finally{await harness?.close();await rm(dir,{recursive:true,force:true});}
