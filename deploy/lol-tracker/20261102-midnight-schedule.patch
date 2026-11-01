@@ -1,0 +1,49 @@
+--- a/deploy/lol-collect.timer
++++ b/deploy/lol-collect.timer
+@@ -1,7 +1,7 @@
+ [Unit]
+-Description=Collect at 12:00 Beijing time every day
++Description=Collect at 00:00 Beijing time every day
+ [Timer]
+-OnCalendar=*-*-* 12:00:00 Asia/Shanghai
++OnCalendar=*-*-* 00:00:00 Asia/Shanghai
+ Persistent=true
+ Unit=lol-collect.service
+ [Install]
+--- a/public/index.html
++++ b/public/index.html
+@@ -1 +1 @@
+-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>海斗分日记 · 14 人追踪</title><link rel="stylesheet" href="/style.css"><main><header><div class="eyebrow">LOL.WAKAKA007.CN · 海斗分日记</div><h1>每天一张表，记录分数变化。</h1><p>14 位玩家 · 北京时间每天 12:00 计划采集 · 数据来自 Hexdata</p><div class="controls"><label>查看日期 <input id="date" type="date"></label><button id="refresh">刷新数据</button><button id="export">导出历史 CSV</button></div></header><div id="status" class="notice">正在读取记录…</div><section class="panel"><div class="title"><h2>分数排行榜</h2><span id="coverage"></span></div><div class="scroll"><table><thead><tr><th>排名</th><th>游戏 ID</th><th>海斗分</th><th>较上次记录日</th><th>记录状态</th><th>最近查询时间</th></tr></thead><tbody id="rows"></tbody></table></div></section><section class="panel"><h2>分数历史</h2><label>选择玩家 <select id="player"></select></label><div id="trend-note"></div><canvas id="chart" height="260" aria-label="所选玩家每日分数趋势"></canvas><div class="scroll"><table><thead><tr><th>日期</th><th>分数</th><th>来源</th><th>查询时间</th></tr></thead><tbody id="history"></tbody></table></div></section><footer>网站显示查询当天取得的预估海斗分，并非游戏官方隐藏分。未查到当天数据时保留最近记录并标记日期，不填补历史数据。<br>五条骨固定使用 #99962。首次记录没有跨日变化值。<a href="https://hexdata.com.cn/matchmaking-position" target="_blank" rel="noopener">查看数据来源</a></footer></main><script src="/app.js" defer></script></html>
++<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>海斗分日记 · 14 人追踪</title><link rel="stylesheet" href="/style.css"><main><header><div class="eyebrow">LOL.WAKAKA007.CN · 海斗分日记</div><h1>每天一张表，记录分数变化。</h1><p>14 位玩家 · 北京时间每天 00:00 计划采集 · 数据来自 Hexdata</p><div class="controls"><label>查看日期 <input id="date" type="date"></label><button id="refresh">刷新数据</button><button id="export">导出历史 CSV</button></div></header><div id="status" class="notice">正在读取记录…</div><section class="panel"><div class="title"><h2>分数排行榜</h2><span id="coverage"></span></div><div class="scroll"><table><thead><tr><th>排名</th><th>游戏 ID</th><th>海斗分</th><th>较上次记录日</th><th>记录状态</th><th>最近查询时间</th></tr></thead><tbody id="rows"></tbody></table></div></section><section class="panel"><h2>分数历史</h2><label>选择玩家 <select id="player"></select></label><div id="trend-note"></div><canvas id="chart" height="260" aria-label="所选玩家每日分数趋势"></canvas><div class="scroll"><table><thead><tr><th>日期</th><th>分数</th><th>来源</th><th>查询时间</th></tr></thead><tbody id="history"></tbody></table></div></section><footer>网站显示查询当天取得的预估海斗分，并非游戏官方隐藏分。未查到当天数据时保留最近记录并标记日期，不填补历史数据。<br>五条骨固定使用 #99962。首次记录没有跨日变化值。<a href="https://hexdata.com.cn/matchmaking-position" target="_blank" rel="noopener">查看数据来源</a></footer></main><script src="/app.js" defer></script></html>
+--- a/README.md
++++ b/README.md
+@@ -7,7 +7,7 @@
+ 2026-10-26 已部署到 sg 宿主机 `/opt/lol-tracker`，公开地址 https://lol.wakaka007.cn 。
+ 使用独立系统用户 `lol-tracker` 和 `/usr/local/bin/node`（v24.18.0）。
+ `lol-tracker.service` 已启用开机启动，监听 `127.0.0.1:3000`，由 Caddy 提供 HTTPS。
+-`lol-collect.timer` 已启用，2026-10-30 调整为每天北京时间 12:00 触发。
++`lol-collect.timer` 已启用，2026-11-02 调整为每天北京时间 00:00 触发。
+ 生产登录态位于 `/var/lib/lol-tracker/accounts`，仅服务用户可读写；与助手工作区的副本独立。
+ 微信长期推送未配置；不会发送微信消息。
+ 部署验证：3 项数据测试和公网 UI 验证通过。首次采集遇 HTTP/2 超时；修复后两账号查询均返回 HTTP 429（额度不足或请求受限），未新增分数，已保留原有 12 人记录。
+@@ -47,11 +47,11 @@
+ 
+ 每天记录到 SQLite `data/scores.sqlite`；同日保留最后一次观测，同时保存所有原始采样记录。跨日变化按此前最近的有记录日计算。网站支持日期选择、玩家趋势、CSV 导出。`data/daily.png` 和 `data/daily-message.txt` 为日报产物。
+ 
+-## 每天北京时间 12:00
++## 每天北京时间 00:00
+ 
+-`deploy/lol-collect.timer` 使用明确的 `Asia/Shanghai`，即 UTC 当天 04:00。部署到真实常驻环境后，将 service/timer 安装到该环境的用户 systemd 目录，并启用 `lol-tracker.service` 和 `lol-collect.timer`；检查 Node 路径与 WorkingDirectory。无人登录时仍需运行的用户服务，由该主机管理员配置生命周期。
++`deploy/lol-collect.timer` 使用明确的 `Asia/Shanghai`，即 UTC 前一天 16:00。部署到真实常驻环境后，将 service/timer 安装到该环境的用户 systemd 目录，并启用 `lol-tracker.service` 和 `lol-collect.timer`；检查 Node 路径与 WorkingDirectory。无人登录时仍需运行的用户服务，由该主机管理员配置生命周期。
+ 
+-另一种方案是由平台计划任务运行 `node /workspace/lol-tracker/collect.cjs`，平台时区为 UTC 时表达式为 `0 4 * * *`，北京时间则为 `0 12 * * *`。不要同时启用两种计划。
++另一种方案是由平台计划任务运行 `node /workspace/lol-tracker/collect.cjs`，平台时区为 UTC 时表达式为 `0 16 * * *`，北京时间则为 `0 0 * * *`。不要同时启用两种计划。
+ 
+ ## 域名上线
+ 
+@@ -63,4 +63,4 @@
+ 
+ ## 备份与故障
+ 
+-备份整个 data 目录及私有登录态目录。采集有互斥锁；异常断电留下 data/collect.lock 时，先确认无采集进程再删除。网页 data 来源均是实际记录。每天 12:00 执行采集；额度耗尽或请求受限会记录在 runs，当前不自动补采，未查到的玩家不会伪造新记录。
++备份整个 data 目录及私有登录态目录。采集有互斥锁；异常断电留下 data/collect.lock 时，先确认无采集进程再删除。网页 data 来源均是实际记录。每天 00:00 执行采集；额度耗尽或请求受限会记录在 runs，当前不自动补采，未查到的玩家不会伪造新记录。
