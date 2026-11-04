@@ -17,7 +17,7 @@ test('mail authorization is bound to host user, with fixed target and read actio
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
-test('harness grants mail relay only to the configured user and closes it after the turn',async()=>{
+test('harness grants mail relay only to the configured user and closes it after the turn',{skip:process.platform!=='linux'},async()=>{
  const {CodexHarness}=await import('../src/platform/adapters/codex.js');
  const {mkdir,access}=await import('node:fs/promises');
  const oldUser=process.env.PLATFORM_MAIL_USER_ID,oldFile=process.env.PLATFORM_MAIL_TOKEN_FILE;
