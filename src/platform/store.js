@@ -43,6 +43,8 @@ export class PlatformStore {
   assistant(id) { return this.db.prepare('SELECT * FROM assistants WHERE id=?').get(id); }
   owned(id,user,readOnly=false) {
     const a=this.assistant(id);
+    // Mail content in history/files remains private even from other platform admins.
+    if(a && a.user_id===process.env.PLATFORM_MAIL_USER_ID && a.user_id!==user.id)throw new AppError(404,'助手不存在');
     if(!a || (a.user_id!==user.id && !(readOnly && user.role==='admin'))) throw new AppError(404,'助手不存在');
     return a;
   }

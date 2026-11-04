@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { PlatformStore, AppError } from './store.js';
 import { Auth } from './auth.js';
 import { Engine } from './engine.js';
+import { startMailNotifications, mailOwner } from './mail-notifications.js';
 import { MEDIA_ID } from './attachments.js';
 import {listWorkspace,previewWorkspaceFile,openWorkspaceFile,changeMemory} from './workspace-files.js';
 import { describeMedia } from '../media.js';
@@ -17,7 +18,10 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
  const downloads=new Downloads(join(dir,'downloads'),{publicUrl});
  const store=new PlatformStore(dir),auth=new Auth(store,{secure:publicUrl?.startsWith('https://')}),engine=new Engine(store,dir,{publishDownload:(...args)=>downloads.publish(...args),...engineOptions});
  if(!store.users().some(u=>u.role==='admin')){if(!adminPassword){store.close();throw new Error('首次启动请设置 PLATFORM_ADMIN_PASSWORD（至少 10 位），用于初始化管理员');}await auth.register(adminUsername,adminPassword,'admin');}
- await engine.init();const clients=new Map();let closing=false;
+ if(process.env.PLATFORM_MAIL_USER_ID)mailOwner(store);
+ await engine.init();
+ const mailNotifications=process.env.PLATFORM_MAIL_NOTIFY==='1'?await startMailNotifications(engine,join(dir,'mail-notify.sock')):null;
+ const clients=new Map();let closing=false;
  const sendEvent=(res,type,data)=>{if(res.writableLength>1024*1024)res.destroy();else res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);};
  engine.on('event',event=>{for(const[res,c]of clients){if(c.assistantId!==event.assistantId)continue;if(!auth.current(c.req)){res.end();clients.delete(res);continue;}sendEvent(res,'update',event);}});
  const heartbeat=setInterval(()=>{for(const[res,c]of clients){if(!auth.current(c.req)){res.end();clients.delete(res);}else res.write(': heartbeat\n\n');}},15000);heartbeat.unref();
@@ -131,7 +135,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    throw new AppError(404,'接口不存在');
   }catch(error){if(!res.headersSent)send(error.status||400,{error:error.message,code:error.code||'ERROR',details:error.details});else res.end();}
  });
- return{server,store,auth,engine,downloads,async close(){closing=true;clearInterval(heartbeat);clearInterval(cleanup);for(const res of clients.keys())res.end();clients.clear();await new Promise(resolveClose=>server.close(resolveClose));await engine.close();await cleaning;await downloads.close();store.close();}};
+ return{server,store,auth,engine,downloads,async close(){closing=true;await mailNotifications?.close();clearInterval(heartbeat);clearInterval(cleanup);for(const res of clients.keys())res.end();clients.clear();await new Promise(resolveClose=>server.close(resolveClose));await engine.close();await cleaning;await downloads.close();store.close();}};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const port=Number(process.env.PLATFORM_PORT||3211);if(!Number.isInteger(port)||port<1||port>65535)throw new Error('PLATFORM_PORT 无效');
