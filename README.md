@@ -346,3 +346,7 @@ test/            Node.js 内置测试框架的集成测试
 开发约定：Codex 仅在用户要求交付产物时，在最终回复中独立输出 `[[clawbot-send:/绝对路径]]`。桥接层移除该行并发送附件，普通 Markdown 链接不会上传文件。文字回复与每个附件各自使用稳定请求 ID；上传失败记为失败，消息提交后连接中断记为结果待确认，不自动重新提交。
 
 媒体上传和输入状态实现对照 [腾讯上传源码](https://github.com/Tencent/openclaw-weixin/blob/main/src/cdn/upload.ts) 与 [API 源码](https://github.com/Tencent/openclaw-weixin/blob/main/src/api/api.ts)。20 MB 是本项目限制，并非声明微信平台最大上限。视频不转码；需要微信客户端支持对应 MP4 编码。
+
+## 归信邮件读取
+
+支持按平台用户授权接入归信收件箱，查询、搜索、读取正文；通过宿主工具和 SSH 隧道访问，不开放发信或修改邮件。配置与边界见 [只读邮件连接](docs/MAIL.md)。

@@ -45,7 +45,7 @@ export class Engine extends EventEmitter {
           this.store.set(key,a.id);this.store.set(`assistant-binding:${a.id}`,{id:account.id,userId:account.userId});
         });
       }});
-      const r={channel,harness:this.harnessFactory({dir:join(dir,'harness')}),draining:null,delivering:null,active:null,command:Promise.resolve(),stateStamp:'',lastPhase:null,connectionStop:null};
+      const r={channel,harness:this.harnessFactory({dir:join(dir,'harness'),userId:a.user_id}),draining:null,delivering:null,active:null,command:Promise.resolve(),stateStamp:'',lastPhase:null,connectionStop:null};
       this.runtimes.set(a.id,r);
       channel.on('input',input=>{try{this.submit(a.id,input.text,'wechat',input.id,input.attachments);}catch(error){this.publish(a.id,'error',{message:error.message});}});
       channel.on('state',state=>{

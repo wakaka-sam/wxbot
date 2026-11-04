@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 // Installation runs on the host, while an assistant can edit its home.
 // Keep every write anchored to directory fds and reject symlink targets.
-async function installFile(home,parts,content,mode){
+export async function installFile(home,parts,content,mode){
  const handles=[];
  try{
   let d=await open(home,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);handles.push(d);
