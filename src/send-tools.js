@@ -17,7 +17,8 @@ export async function installSendTools(home, { visibleHome = home, node = proces
   // Keep tool-readable instructions outside the denied CODEX_HOME containing
   // the shared model credential. Codex discovers this standard user skill root.
   const skill = join(home, '.agents', 'skills', 'wxbot-send');
-  for (const dir of [tools, bin, relayRoot, skill]) await mkdir(dir, { recursive: true, mode: 0o700 });
+  const browserSkill = join(home, '.agents', 'skills', 'wxbot-browser');
+  for (const dir of [tools, bin, relayRoot, skill, browserSkill]) await mkdir(dir, { recursive: true, mode: 0o700 });
   for (const name of ['cli.js', 'send-client.js', 'browser.cjs', 'browser-preload.cjs']) await writeFile(join(tools, name), await readFile(new URL(name, import.meta.url)), { mode: 0o600 });
   await writeFile(join(tools, 'package.json'), '{"type":"module"}\n', { mode: 0o600 });
   const visibleCli = join(visibleHome, '.local', 'share', 'wxbot-tools', 'cli.js');
@@ -25,5 +26,6 @@ export async function installSendTools(home, { visibleHome = home, node = proces
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
   await writeFile(join(bin, 'wxbot'), `#!/bin/sh\nexport WXBOT_RELAY_DIR=${quote(visibleRelay)}\nexec ${quote(node)} ${quote(visibleCli)} "$@"\n`, { mode: 0o700 });
   await writeFile(join(skill, 'SKILL.md'), `---\nname: wxbot-send\ndescription: 向当前 wxbot 会话绑定的微信用户主动发送文字、图片、文件、进度和问题。仅用于 wxbot 会话。\n---\n\n${SEND_INSTRUCTIONS}\n`, { mode: 0o600 });
+  await writeFile(join(browserSkill, 'SKILL.md'), await readFile(new URL('browser-skill.md', import.meta.url)), { mode: 0o600 });
   return { bin, relayRoot, visibleRelay, visibleCli };
 }

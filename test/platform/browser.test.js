@@ -19,6 +19,7 @@ test('browser helper requires the managed proxy and is installed in the assistan
   delete process.env.HTTP_PROXY;delete process.env.HTTPS_PROXY;
   await assert.rejects(openBrowser(),/需要平台网络代理/);
   await installSendTools(home);
+  assert.match(await readFile(join(home,'.agents/skills/wxbot-browser/SKILL.md'),'utf8'),/saveState/);
   assert.match(await readFile(join(home,'.local/share/wxbot-tools/browser-preload.cjs'),'utf8'),/installBrowserCompatibility/);
   assert.equal(await readFile(join(home,'.local/share/wxbot-tools/browser.cjs'),'utf8'),await readFile(new URL('../../src/browser.cjs',import.meta.url),'utf8'));
  }finally{
@@ -31,7 +32,7 @@ test('browser helper requires the managed proxy and is installed in the assistan
 test('legacy Playwright launch keeps caller options and installs the guard before a page is created',async()=>{
  const {installBrowserCompatibility}=createRequire(import.meta.url)('../../src/browser.cjs');
  const calls=[];let handler;
- const context={async route(pattern,fn){calls.push('route');handler=fn;},async newPage(){calls.push('page');return {context:()=>context};}};
+ const context={setDefaultTimeout(){},setDefaultNavigationTimeout(){},async route(pattern,fn){calls.push('route');handler=fn;},async newPage(){calls.push('page');return {context:()=>context};}};
  let launchOptions,contextOptions;
  const browser={async newContext(options){contextOptions=options;return context;},async newPage(options){return (await this.newContext(options)).newPage();}};
  const playwright={chromium:{async launch(options){launchOptions=options;return browser;}}};
@@ -46,4 +47,31 @@ test('legacy Playwright launch keeps caller options and installs the guard befor
  assert.equal(action,'abort');
  await handler({request:()=>request('https://shop.battlenet.com.cn/',true),abort:async()=>action='abort',continue:async()=>action='continue'});
  assert.equal(action,'continue');
+});
+
+test('managed legacy launches use the matching headless shell and proxy, and clean failed launches',async()=>{
+ const {installBrowserCompatibility}=createRequire(import.meta.url)('../../src/browser.cjs');
+ const {existsSync}=await import('node:fs');
+ const secure=process.env.HTTPS_PROXY;process.env.HTTPS_PROXY='http://127.0.0.1:3128';
+ let options;
+ const playwright={chromium:{executablePath:()=>'/bundled/chrome',async launch(value){options=value;throw new Error('synthetic launch failure');}}};
+ try {
+  installBrowserCompatibility(playwright,{managed:true});
+  for(const executablePath of ['/usr/bin/chromium','/usr/lib/chromium/chromium','/bundled/chrome']){
+   await assert.rejects(playwright.chromium.launch({executablePath,channel:'chromium',headless:false,timeout:0,proxy:{server:'http://wrong-proxy'},args:['--disable-gpu']}),/synthetic launch failure/);
+   assert.equal(options.executablePath,undefined);assert.equal(options.channel,undefined);assert.equal(options.headless,true);
+   assert.deepEqual(options.proxy,{server:process.env.HTTPS_PROXY});assert.equal(options.timeout,30000);
+   assert(options.args.includes('--disable-gpu'));assert(options.args.includes('--disable-dev-shm-usage'));
+   assert.equal(existsSync(options.env.XDG_CONFIG_HOME),false,'failed launch must clean private runtime data');
+  }
+  await assert.rejects(playwright.chromium.launch({executablePath:'/custom/chrome'}),/仅支持平台配套/);
+ }finally{if(secure===undefined)delete process.env.HTTPS_PROXY;else process.env.HTTPS_PROXY=secure;}
+});
+
+test('named browser sessions reject paths and ambiguous state before launching',async()=>{
+ const secure=process.env.HTTPS_PROXY;process.env.HTTPS_PROXY='http://127.0.0.1:3128';
+ try{
+  await assert.rejects(openBrowser({session:'../another-user'}),/session 须为/);
+  await assert.rejects(openBrowser({session:'valid',contextOptions:{storageState:{}}}),/不能同时指定/);
+ }finally{if(secure===undefined)delete process.env.HTTPS_PROXY;else process.env.HTTPS_PROXY=secure;}
 });
