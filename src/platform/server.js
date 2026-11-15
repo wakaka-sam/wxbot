@@ -11,7 +11,7 @@ import {listWorkspace,previewWorkspaceFile,openWorkspaceFile,changeMemory} from 
 import { describeMedia } from '../media.js';
 import { Downloads, handleDownloads } from '../downloads.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
-const publicFiles={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/files.js':['files.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
+const publicFiles={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/files.js':['files.js','text/javascript; charset=utf-8'],'/schedules.js':['schedules.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY',
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
 export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR||join(root,'platform-data')),publicUrl=process.env.PLATFORM_PUBLIC_URL,adminUsername=process.env.PLATFORM_ADMIN_USERNAME||'admin',adminPassword=process.env.PLATFORM_ADMIN_PASSWORD,engineOptions={},downloadTokenFile=process.env.WXBOT_DOWNLOAD_TOKEN_FILE}={}){
@@ -72,6 +72,12 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    }
    const match=path.match(/^\/api\/assistants\/([a-f0-9-]+)(?:\/(.+))?$/);if(!match)throw new AppError(404,'接口不存在');
    const[,id,action='']=match,a=store.owned(id,user,req.method==='GET'),readOnly=a.user_id!==user.id;
+   if(action==='schedules'){
+    if(readOnly)throw new AppError(403,'只能管理自己的自动任务');
+    if(req.method==='GET')return send(200,engine.schedules.request(id,{action:'list'}));
+    auth.rate(`schedule:${user.id}`,60,60000);
+    return send(200,engine.schedules.request(id,body));
+   }
    const workspace=join(dir,'assistants',id,'harness','workspace');
    if(action==='files'){
     if(req.method!=='GET')throw new AppError(405,'文件目录只读');

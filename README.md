@@ -1,5 +1,7 @@
 # wxbot · ClawBot Workspace
 
+自动任务：在微信中说“每天早上 9 点提醒我喝水”，或在网页侧栏打开「自动任务」。支持一次性、间隔、每天、每周，默认北京时间。详见 [自动任务说明](docs/SCHEDULES.md)。
+
 微信 ClawBot 消息台与多用户 AI 助手平台。支持微信扫码接入、网页聊天、持久 Codex 会话和实时输出，无需运行 OpenClaw。
 
 当前版本：[v1.0.1](https://github.com/wakaka-sam/wxbot/releases/tag/v1.0.1) · [更新记录](CHANGELOG.md) · [平台部署与适配器接口](docs/PLATFORM.md)

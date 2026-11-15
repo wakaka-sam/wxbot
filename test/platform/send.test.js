@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { mkdir } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -21,6 +22,7 @@ test('平台真实发送命令经过 Harness relay 与持久 outbox，重复请�
     let receipt;
     r.harness.run = async args => {
       const h = Object.create(CodexHarness.prototype);
+      await mkdir(join(f.dir, 'harness', 'home'), { recursive: true });
       Object.assign(h, { sendTools: tools, dir: join(f.dir, 'harness'), cwd: f.dir, threadId: 'test-thread', client: {
         async run({ input, onEvent }) {
           const turn = input[0].text.match(/wxbot send --turn ([a-f0-9-]{36})/)[1], requestId = randomUUID();

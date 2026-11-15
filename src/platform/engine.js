@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError } from './store.js';
+import { Schedules } from './schedules.js';
 import { migrateSingleAssistant } from './single-assistant.js';
 import { WechatChannel } from './adapters/wechat.js';
 import { CodexHarness } from './adapters/codex.js';
@@ -13,10 +14,24 @@ const TOOL_STATUS_TEXTS=new Set(['正在执行命令…','正在修改工作文�
 const uuidFor=value=>{const h=createHash('sha256').update(value).digest('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;};
 export class Engine extends EventEmitter {
   constructor(store,dir,{channelFactory=o=>new WechatChannel(o),harnessFactory=o=>new CodexHarness(o),publishDownload}={}){
-    super();Object.assign(this,{store,dir,channelFactory,harnessFactory,publishDownload});this.runtimes=new Map();this.opening=new Map();this.locks=new Map();this.closed=false;
+    super();Object.assign(this,{store,dir,channelFactory,harnessFactory,publishDownload});this.runtimes=new Map();this.opening=new Map();this.locks=new Map();this.closed=false;this.schedules=new Schedules(store);
   }
   publish(id,type,data){this.emit('event',{assistantId:id,type,data});}
-  async init(){await migrateSingleAssistant(this.store,this.dir);this.store.recover();for(const a of this.store.assistants()){const r=await this.runtime(a);if(a.active){await r.channel.start();this.reconcile(a.id,r);this.wake(a.id);this.deliver(a.id);}}}
+  async init(){await migrateSingleAssistant(this.store,this.dir);this.store.recover();this.schedules.settle();for(const a of this.store.assistants()){const r=await this.runtime(a);if(a.active){await r.channel.start();this.reconcile(a.id,r);this.wake(a.id);this.deliver(a.id);}}this.tickSchedules();this.scheduleTimer=setInterval(()=>this.tickSchedules(),10000);this.scheduleTimer.unref();}
+  tickSchedules(now=Date.now()){
+    if(this.closed)return;
+    for(const task of this.schedules.due(now)){
+      if(!this.connected(task.assistant_id))continue;
+      try{const result=this.schedules.enqueue(task.id,now);if(result){this.publish(result.assistantId,'message',result.message);this.wake(result.assistantId);}}
+      catch(error){this.publish(task.assistant_id,'error',{message:`自动任务入队失败：${error.message}`});}
+    }
+  }
+  scheduleFromTool(id,run,request){
+    if(this.closed||this.runtimes.get(id)?.active!==run||run.interrupted)throw new AppError(409,'任务管理轮次已结束');
+    this.requireActive(id);
+    if(run.scheduled&&request?.action!=='list')throw new AppError(403,'自动执行期间不能创建或修改自动任务');
+    return this.schedules.request(id,request);
+  }
   async runtime(a){
     if(this.runtimes.has(a.id))return this.runtimes.get(a.id);
     if(this.opening.has(a.id))return this.opening.get(a.id);
@@ -91,7 +106,7 @@ export class Engine extends EventEmitter {
     this.publish(id,'assistant',this.snapshot(id));return this.snapshot(id);
   });}
   async deactivate(id,user){return this.lock(user.id,async()=>{this.store.deactivate(id,user);await this.stopRuntime(id);return this.snapshot(id);});}
-  async stopRuntime(id){const r=this.runtimes.get(id);this.store.cancelPending(id);if(r){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt().catch(()=>{});}await r.draining;await r.harness.close();}this.publish(id,'assistant',this.snapshot(id));}
+  async stopRuntime(id){const r=this.runtimes.get(id);this.store.cancelPending(id);this.schedules.settle();if(r){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt().catch(()=>{});}await r.draining;await r.harness.close();}this.publish(id,'assistant',this.snapshot(id));}
   requireActive(id){const a=this.store.assistant(id);if(!a?.active)throw new AppError(409,'请先激活此助手','INACTIVE');return a;}
   async channelCommand(id,action,body={}){
     const a=this.requireActive(id),r=await this.runtime(a);
@@ -214,9 +229,10 @@ export class Engine extends EventEmitter {
   async drain(id,r){
     while(!this.closed&&this.store.assistant(id)?.active&&this.connected(id)&&!r.connectionStop){
       const jobs=this.store.pending(id);if(!jobs.length)break;
-      const selected=jobs[0].kind==='summary'?[jobs[0]]:jobs.filter(j=>j.kind==='chat').slice(0,20);
+      const boundary=jobs.findIndex(j=>j.kind!=='chat');
+      const selected=jobs[0].kind!=='chat'?[jobs[0]]:jobs.slice(0,boundary<0?20:Math.min(boundary,20));
       const job=selected[0];for(const j of selected)this.store.jobState(j.id,'running');
-      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id,explicitTexts:new Set()};this.publish(id,'assistant',this.snapshot(id));
+      const run=r.active={interrupted:false,submitted:false,superseded:false,inputAbort:new AbortController(),items:new Map(),jobId:job.id,scheduled:job.kind==='schedule',explicitTexts:new Set()};this.publish(id,'assistant',this.snapshot(id));
       const sendBinding=r.channel.snapshot().account;
       const sendMessage=(item,complete=false)=>{
         // Keep blank lines inside a single completed message. textDeliveries
@@ -240,7 +256,7 @@ export class Engine extends EventEmitter {
         }
         const prompt=[selected.map(j=>j.prompt).join('\n\n[后续输入]\n'),prepared.text,prepared.notices.length?'附件预览说明（预览不等于完整内容，有原文件路径时可直接读取；不要编造未读取内容）：\n'+prepared.notices.join('\n'):''].filter(Boolean).join('\n\n');
         run.submitted=true;
-        const task=r.harness.run({text:prompt,images:prepared.images,onSend:request=>this.sendFromTool(id,run,sendBinding,request),onEvent:event=>{
+        const task=r.harness.run({text:prompt,images:prepared.images,onSchedule:request=>this.scheduleFromTool(id,run,request),onSend:request=>this.sendFromTool(id,run,sendBinding,request),onEvent:event=>{
           if(r.active!==run)return;
           if(event.type==='started'){if(run.interrupted||!this.connected(id))void r.harness.interrupt().catch(()=>{});return;}
           if(run.interrupted||!this.connected(id))return;
@@ -261,10 +277,10 @@ export class Engine extends EventEmitter {
         const requeue=run.superseded&&!run.submitted&&!this.closed&&this.store.assistant(id)?.active;
         for(const j of selected)this.store.jobState(j.id,requeue?'pending':interrupted?'interrupted':'failed');
         if(!interrupted){const m=this.store.addMessage(id,{role:'system',kind:'status',text:`执行失败：${error.message}`,state:'error'});this.publish(id,'message',m);this.enqueueText(id,m.text,`error:${m.id}`);await r.harness.close();}
-      }finally{r.active=null;this.publish(id,'assistant',this.snapshot(id));}
+      }finally{this.schedules.settle();r.active=null;this.publish(id,'assistant',this.snapshot(id));}
     }
   }
-  async interrupt(id){const r=this.runtimes.get(id);this.store.cancelPending(id);if(r?.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt();}}
-  async close(){this.closed=true;await Promise.all([...this.locks.values()].map(p=>p.catch(()=>{})));for(const r of this.runtimes.values()){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt().catch(()=>{});}}
+  async interrupt(id){const r=this.runtimes.get(id);this.store.cancelPending(id);this.schedules.settle();if(r?.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt();}}
+  async close(){this.closed=true;clearInterval(this.scheduleTimer);await Promise.all([...this.locks.values()].map(p=>p.catch(()=>{})));for(const r of this.runtimes.values()){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt().catch(()=>{});}}
     await Promise.all([...this.runtimes.values()].map(async r=>{await r.connectionStop;await r.draining;await r.delivering;await r.harness.close();await r.channel.close();}));}
 }
