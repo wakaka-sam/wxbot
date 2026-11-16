@@ -9,7 +9,7 @@ const page=await browser.newPage({viewport:{width:1280,height:900},reducedMotion
 async function nav(selector){if(!await page.locator(selector).isVisible())await page.click('#menu-open');await page.click(selector);}
 async function screenshot(name,selector){await page.setViewportSize({width:320,height:844});const box=await page.locator(selector).boundingBox();assert(box.x>=0&&box.x+box.width<=321);assert(await page.locator(selector).evaluate(n=>n.scrollWidth<=n.clientWidth+1));assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:join(artifacts,name+'.png'),fullPage:true});}
 try{
- await page.goto(f.base);await page.click('#register-tab');await page.fill('#username','workspacebrowser');await page.fill('#password','Workspace-browser-739');await page.click('#auth-submit');await page.locator('#schedules-open').waitFor({state:'visible'});
+ await page.goto(f.base);await page.click('#account-open');await page.click('#register-tab');await page.fill('#username','workspacebrowser');await page.fill('#password','Workspace-browser-739');await page.click('#auth-submit');await page.locator('#schedules-open').waitFor({state:'visible'});
  const id=f.app.store.assistants(f.app.store.userByName('workspacebrowser').id)[0].id;
  for(let i=0;i<12;i++)f.app.store.addMessage(id,{role:'assistant',text:'项目月报验收 '+i});
  await nav('#history-open');await page.fill('#history-query','月报');await page.click('#history-submit');await page.locator('.history-result').first().waitFor();assert.equal(await page.locator('.history-result').count(),10);await page.click('#history-more');await page.waitForFunction(()=>document.querySelectorAll('.history-result').length===12);

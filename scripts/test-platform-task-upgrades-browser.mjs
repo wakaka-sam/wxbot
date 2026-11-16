@@ -7,7 +7,7 @@ const artifacts=process.env.BROWSER_ARTIFACTS||'/tmp/wxbot-task-upgrades-browser
 const f=await fixture(),browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE,args:['--no-sandbox']});
 const page=await browser.newPage({viewport:{width:1280,height:900},reducedMotion:'reduce'}),errors=[];page.on('pageerror',e=>errors.push(e.message));
 try{
- await page.goto(f.base);await page.click('#register-tab');await page.fill('#username','taskbrowser');await page.fill('#password','Task-browser-739');await page.click('#auth-submit');await page.locator('#schedules-open').waitFor({state:'visible'});
+ await page.goto(f.base);await page.click('#account-open');await page.click('#register-tab');await page.fill('#username','taskbrowser');await page.fill('#password','Task-browser-739');await page.click('#auth-submit');await page.locator('#schedules-open').waitFor({state:'visible'});
  const id=f.app.store.assistants(f.app.store.userByName('taskbrowser').id)[0].id,r=f.app.engine.runtimes.get(id);await r.channel.pair();
  await page.click('#schedules-open');await page.fill('#schedule-name','喝水');await page.fill('#schedule-prompt','喝水时间到了');await page.click('#schedule-submit');await page.locator('.schedule-card').waitFor();
  await page.getByRole('button',{name:'编辑',exact:true}).click();await page.fill('#schedule-name','工作日喝水');await page.selectOption('#schedule-type','workdays');await page.fill('#schedule-time','10:30');

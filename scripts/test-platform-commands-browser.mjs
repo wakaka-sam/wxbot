@@ -7,7 +7,7 @@ const artifacts=process.env.BROWSER_ARTIFACTS||'/tmp/wxbot-commands-browser';awa
 const f=await fixture(),browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE,args:['--no-sandbox']});
 const page=await browser.newPage({viewport:{width:1280,height:900},reducedMotion:'reduce'}),errors=[];page.on('pageerror',e=>errors.push(e.message));
 try{
- await page.goto(f.base);await page.click('#register-tab');await page.fill('#username','commandbrowser');await page.fill('#password','Commands-browser-739');await page.click('#auth-submit');await page.locator('#schedules-open').waitFor({state:'visible'});
+ await page.goto(f.base);await page.click('#account-open');await page.click('#register-tab');await page.fill('#username','commandbrowser');await page.fill('#password','Commands-browser-739');await page.click('#auth-submit');await page.locator('#schedules-open').waitFor({state:'visible'});
  const id=f.app.store.assistants(f.app.store.userByName('commandbrowser').id)[0].id,r=f.app.engine.runtimes.get(id);
  await page.fill('#chat-input','普通文字');assert(await page.locator('#send').isDisabled());
  await page.fill('#chat-input','/');await page.locator('#command-menu').waitFor({state:'visible'});assert.equal(await page.locator('#command-menu button').count(),18);

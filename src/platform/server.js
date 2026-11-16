@@ -62,7 +62,8 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    }else if(req.method!=='GET')return send(405,{error:'请求方法不支持'});
    const path=url.pathname,user=auth.current(req),ip=req.socket.remoteAddress||'unknown';
    if(path==='/api/auth'&&req.method==='GET')return send(200,{user});
-   if(path==='/api/register'&&req.method==='POST'){auth.rate(`register:${ip}`,10,3600000);const u=await auth.register(body.username,body.password);auth.issue(u,res);return send(201,{user:u});}
+   if(path==='/api/guest'&&req.method==='POST')return send(200,{user:auth.guest(req,res)});
+   if(path==='/api/register'&&req.method==='POST'){if(body.bindGuest===true&&user?.role!=='guest')throw new AppError(401,'游客会话已失效，请返回主页重试；如果已绑定，请登录该账号');auth.rate(`register:${ip}`,10,3600000);const u=user?.role==='guest'?await auth.bindGuest(user,body.username,body.password,res):await auth.register(body.username,body.password);if(user?.role!=='guest')auth.issue(u,res);return send(201,{user:u});}
    if(path==='/api/login'&&req.method==='POST'){auth.rate(`login:${ip}`,30);const u=await auth.login(body.username,body.password);auth.issue(u,res);return send(200,{user:u});}
    if(path==='/api/logout'&&req.method==='POST'){auth.logout(req,res);for(const[r,c]of clients)if(!auth.current(c.req)){r.end();clients.delete(r);}return send(200,{ok:true});}
    if(path==='/health')return send(200,{ok:true});

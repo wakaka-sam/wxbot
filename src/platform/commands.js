@@ -74,7 +74,7 @@ function perform(engine,id,command,requestId,now,source){
  }
 
  if(['status','settings','whoami','stop'].includes(name)&&args)invalid(help(name));
- if(name==='whoami')return {text:`账号：${engine.store.user(a.user_id).username}\n助手：${a.name}\n角色：${engine.store.user(a.user_id).role==='admin'?'管理员':'普通用户'}\n仅操作当前账号自己的任务、会话和文件。`};
+ if(name==='whoami')return {text:`账号：${engine.store.user(a.user_id).role==='guest'?'游客（尚未绑定账号）':engine.store.user(a.user_id).username}\n助手：${a.name}\n角色：${engine.store.user(a.user_id).role==='admin'?'管理员':engine.store.user(a.user_id).role==='guest'?'游客':'普通用户'}\n仅操作当前账号自己的任务、会话和文件。`};
  if(name==='settings')return {text:`当前参数（只读）\n模型：${runtime?.harness.model||process.env.PLATFORM_MODEL||'gpt-6-astra'}\n默认时区：Asia/Shanghai（北京时间）\n自动任务：最多 20 个未结束，间隔最短 1 分钟\n待办与收藏：各最多 1000 条，待办截止时间在未来一年内\n附件：每条最多 10 个，网页总量 ${MAX_MEDIA_SIZE/1024/1024} MB\n智能执行：单轮最多 ${RUNTIME_LIMITS.turnTimeout/60000} 分钟，无活动 ${RUNTIME_LIMITS.stallTimeout/60000} 分钟停止\n工具错误：连续 ${RUNTIME_LIMITS.maxToolFailures} 次失败或任务工具同错 ${RUNTIME_LIMITS.sameScheduleErrors} 次停止\n微信：每次新微信输入后最多 ${connection?.replyBudget?.limit||10} 条回复，网页输入不刷新额度\n轻量提醒到点不调用模型；/status 查看实时状态。`};
  if(name==='status'){
   const counts=engine.store.db.prepare('SELECT state,COUNT(*) n FROM outbox WHERE assistant_id=? GROUP BY state').all(id),count=state=>counts.find(r=>r.state===state)?.n||0;

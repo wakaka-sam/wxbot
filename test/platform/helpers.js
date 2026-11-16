@@ -52,9 +52,9 @@ export async function fixture(){
  async function start(){app=await createPlatform({dir,adminPassword:'Admin-test-password-731',engineOptions:fake.options});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));return app;}
  await start();
  const ctx={dir,fake,get app(){return app;},get base(){return `http://127.0.0.1:${app.server.address().port}`;},async restart(){await app.close();await start();},async close(){await app.close();await rm(dir,{recursive:true,force:true});}};
- ctx.client=()=>{let cookie='';return{get cookie(){return cookie;},async request(path,body,extra={}){
-  const response=await fetch(ctx.base+path,{method:body===undefined?'GET':'POST',headers:{Cookie:cookie,...(body===undefined?{}:{'X-Wxbot-Platform':'1','Content-Type':'application/json'}),...extra},body:body===undefined?undefined:JSON.stringify(body)});
-  if(response.headers.has('set-cookie'))cookie=response.headers.get('set-cookie').split(';')[0];
+ ctx.client=()=>{const cookies=new Map();const cookie=()=>[...cookies].map(([k,v])=>k+'='+v).join('; ');return{get cookie(){return cookie();},async request(path,body,extra={}){
+  const response=await fetch(ctx.base+path,{method:body===undefined?'GET':'POST',headers:{Cookie:cookie(),...(body===undefined?{}:{'X-Wxbot-Platform':'1','Content-Type':'application/json'}),...extra},body:body===undefined?undefined:JSON.stringify(body)});
+  for(const header of response.headers.getSetCookie()){const [name,value]=header.split(';')[0].split('=');if(value)cookies.set(name,value);else cookies.delete(name);}
   return{status:response.status,headers:response.headers,data:await response.json()};
  }};};
  return ctx;

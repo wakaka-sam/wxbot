@@ -23,7 +23,7 @@ await page.goto(`http://localhost:${external.address().port}`);
 const landing=page.waitForResponse(response=>response.url()===f.base+'/?from=external');
 await page.click('a');const response=await landing;
 assert.equal(response.status(),200);assert.equal((await response.request().allHeaders())['sec-fetch-site'],'cross-site');
-await page.locator('#auth-view').waitFor({state:'visible'});await page.screenshot({animations:'disabled',path:join(artifacts,'login.png')});
+await page.locator('#app-view').waitFor({state:'visible'});await page.click('#account-open');await page.locator('#auth-view').waitFor({state:'visible'});await page.screenshot({animations:'disabled',path:join(artifacts,'login.png')});
 await page.click('#register-tab');await page.fill('#username','browseruser');await page.fill('#password','Browser-test-731');await page.click('#auth-submit');await page.locator('#app-view').waitFor({state:'visible'});
 await page.waitForFunction(()=>document.querySelector('#chat-title').textContent==='我的助手');
 assert.equal(await page.locator('#create-open').count(),0);assert.equal(await page.locator('#assistant-cards').count(),0);
@@ -101,7 +101,7 @@ await page.locator('#connection-gate').waitFor();await page.waitForFunction(()=>
 assert.equal(f.app.engine.runtimes.get(f.app.store.assistants(f.app.store.userByName('browseruser').id)[0].id).active,null);
 await page.setViewportSize({width:1440,height:960});
 await writeFile(join(workspaceRoot,'MEMORY.md'),'管理员只读检查');
-await page.click('#logout');await page.locator('#auth-view').waitFor({state:'visible'});await page.fill('#username','admin');await page.fill('#password','Admin-test-password-731');await page.click('#auth-submit');await page.click('#admin-nav');await page.locator('.admin-user',{hasText:'browseruser'}).click();await page.locator('#readonly-banner').waitFor({state:'visible'});assert.equal(await page.locator('#chat-form').isVisible(),false);await page.locator('.message.user').first().waitFor();await page.screenshot({animations:'disabled',path:join(artifacts,'admin.png')});
+await page.click('#logout');await page.click('#login-open');await page.locator('#auth-view').waitFor({state:'visible'});await page.fill('#username','admin');await page.fill('#password','Admin-test-password-731');await page.click('#auth-submit');await page.click('#admin-nav');await page.locator('.admin-user',{hasText:'browseruser'}).click();await page.locator('#readonly-banner').waitFor({state:'visible'});assert.equal(await page.locator('#chat-form').isVisible(),false);await page.locator('.message.user').first().waitFor();await page.screenshot({animations:'disabled',path:join(artifacts,'admin.png')});
 await page.click('#files-open');await page.click('#files-tab-memory');await page.locator('.file-row[data-path="MEMORY.md"]').click();await page.waitForFunction(()=>document.querySelector('#file-text').textContent==='管理员只读检查');
 assert.equal(await page.locator('#memory-new').isVisible(),false);assert.equal(await page.locator('#memory-editor').isVisible(),false);assert.equal(await page.locator('#memory-actions').isVisible(),false);await page.click('#files-close');
 // The directory exposes user activity, live status, filters and mobile navigation.
@@ -120,7 +120,7 @@ await page.selectOption('#admin-sort','recent');assert.match(await page.locator(
 assert.match(await page.locator('.admin-user').filter({hasText:'admin'}).textContent(),/尚未使用/);
 await page.route('**/api/admin/users',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'temporarily unavailable'})}));
 await page.click('#admin-refresh');await page.locator('#admin-users-panel.stale').waitFor();
-assert.match(await page.locator('#admin-refresh-status').textContent(),/更新失败/);assert.equal(await page.locator('.admin-user').count(),2);
+assert.match(await page.locator('#admin-refresh-status').textContent(),/更新失败/);assert.equal(await page.locator('.admin-user').count(),3);assert.equal(await page.locator('.admin-user').filter({hasText:'游客'}).count(),1);
 await page.unroute('**/api/admin/users');await page.click('#admin-refresh');await page.waitForFunction(()=>!document.querySelector('#admin-users-panel').classList.contains('stale'));
 await page.screenshot({animations:'disabled',path:join(artifacts,'admin.png')});
 for(const width of [390,320]){
