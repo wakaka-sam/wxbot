@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError } from './store.js';
+import { parseCommand,submitCommand } from './commands.js';
 import { Schedules } from './schedules.js';
 import { migrateSingleAssistant } from './single-assistant.js';
 import { WechatChannel } from './adapters/wechat.js';
@@ -121,9 +122,12 @@ export class Engine extends EventEmitter {
   }
   reconcile(id,r){for(const m of r.channel.history())this.submit(id,m.text,'wechat',m.id,m.attachments);}
   submit(id,text,source='web',key=randomUUID(),attachments=[]){
-    this.requireActive(id);if(source==='web')this.requireConnected(id);attachments=source==='wechat'?normalizeAttachments(attachments):this.uploads?.resolve(id,attachments)||[];
+    this.requireActive(id);attachments=source==='wechat'?normalizeAttachments(attachments):this.uploads?.resolve(id,attachments)||[];
     if(typeof text!=='string'||(!text.trim()&&!attachments.length)||text.length>20000)throw new AppError(400,'消息须为 1–20000 个字符');
     if(typeof key!=='string'||key.length>500)throw new AppError(400,'请求标识无效');
+    const command=parseCommand(text);if(command)return submitCommand(this,id,text.trim(),source,key,command,attachments);
+    if(source==='web')this.requireConnected(id);
+    if(text.trimStart().startsWith('//'))text=text.trimStart().slice(1);
     const messageId=randomUUID();
     const outbound=source==='web'?this.textDeliveries(id,text.trim(),`user:${messageId}`,'[User]: '):[];
     // Commit the input, model job and channel mirror together; retries cannot lose or duplicate the mirror.

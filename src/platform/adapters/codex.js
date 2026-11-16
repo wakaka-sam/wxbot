@@ -10,6 +10,7 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { RUNTIME_LIMITS } from '../runtime-limits.js';
 import { agentConfig } from './codex-policy.js';
 import { CodexClient } from '../../codex-client.js';
 import { createSendRelay } from '../../send-relay.js';
@@ -74,7 +75,7 @@ export class CodexHarness {
       args=['--scope','--quiet','--collect','--unit='+this.scope,'-p','MemoryMax=768M','-p','MemorySwapMax=256M','-p','CPUQuota=100%','-p','TasksMax=192','-p','TimeoutStopSec=5s',command,...args];
       command=runner;
     }else this.cwd=workspace;
-    this.client=new CodexClient({command,args,cwd,env,turnTimeout:10*60*1000,stallTimeout:2*60*1000,maxToolFailures:5});await this.client.initialize();
+    this.client=new CodexClient({command,args,cwd,env,...RUNTIME_LIMITS});await this.client.initialize();
     const params={cwd:this.cwd,model:this.model,approvalPolicy:'never',config:{default_permissions:'assistant'},developerInstructions:INSTRUCTIONS+'\n'+SEND_INSTRUCTIONS+'\n'+SCHEDULE_INSTRUCTIONS};
     const result=threadId?await this.client.request('thread/resume',{...params,threadId,excludeTurns:true}):await this.client.request('thread/start',{...params,ephemeral:false});
     this.threadId=result.thread?.id||threadId;if(!this.threadId)throw new Error('Codex 未返回会话 ID');onThread(this.threadId);
@@ -96,7 +97,7 @@ export class CodexHarness {
     const guarded=async(name,fn,request)=>{
       try{const result=await fn(request);if(result?.error)throw new Error(result.error);failures.delete(name);return result;}
       catch(error){const prior=failures.get(name),count=prior?.message===error.message?prior.count+1:1;failures.set(name,{message:error.message,count});
-        if(count>=3)this.client?.abortTurn?.(new Error(`${name}连续三次返回相同错误，已停止重试：${error.message}`));
+        if(count>=RUNTIME_LIMITS.sameScheduleErrors)this.client?.abortTurn?.(new Error(`${name}连续三次返回相同错误，已停止重试：${error.message}`));
         throw error;
       }
     };

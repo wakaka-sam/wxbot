@@ -27,7 +27,7 @@ await page.locator('#auth-view').waitFor({state:'visible'});await page.screensho
 await page.click('#register-tab');await page.fill('#username','browseruser');await page.fill('#password','Browser-test-731');await page.click('#auth-submit');await page.locator('#app-view').waitFor({state:'visible'});
 await page.waitForFunction(()=>document.querySelector('#chat-title').textContent==='我的助手');
 assert.equal(await page.locator('#create-open').count(),0);assert.equal(await page.locator('#assistant-cards').count(),0);
-assert.equal(await page.locator('#chat-input').isDisabled(),true);assert.equal(await page.locator('#connection-gate').isVisible(),true);
+assert.equal(await page.locator('#chat-input').isDisabled(),false);assert.equal(await page.locator('#send').isDisabled(),true);assert.equal(await page.locator('#connection-gate').isVisible(),true);
 const r=[...f.fake.channels.values()].at(-1);
 await page.click('#pair-open');await page.click('#qr-refresh');await page.locator('#qr').waitFor({state:'visible'});assert.match(await page.locator('#pair-qr-panel').textContent(),/连接成功后.*微信中输入消息/);
 r.state.phase='verifying';r.emitState();await page.locator('#verify-form').waitFor({state:'visible'});await page.fill('#pair-code','2468');await page.click('#verify-form button');await page.locator('#pair-success').waitFor({state:'visible'});
@@ -51,7 +51,7 @@ assert.equal(await page.locator('#pair-dialog').isVisible(),true);
 await page.evaluate(()=>window.testStreams.forEach(s=>s.close()));r.input('新的微信消息','browser-next-input');
 await page.locator('#pair-dialog').waitFor({state:'hidden'});
 await page.reload();await page.locator('.message.user').first().waitFor();
-await page.waitForFunction(()=>!document.querySelector('#chat-input').disabled);assert.equal(await page.locator('#connection-gate').isVisible(),false);
+await page.waitForFunction(()=>document.querySelector('#connection-gate').hidden);assert.equal(await page.locator('#connection-gate').isVisible(),false);
 await page.fill('#chat-input','WAIT 请先构思一下');await page.click('#send');await page.locator('.message.progress').first().waitFor();await page.fill('#chat-input','改为给我三个简短建议');await page.click('#send');await page.waitForFunction(()=>[...document.querySelectorAll('.message.assistant.chat')].some(e=>e.textContent.includes('回答：改为给我三个简短建议')));assert.ok(f.fake.interrupts.length);
 await page.fill('#chat-input','网页消息也同步到微信');await page.click('#send');await page.waitForFunction(()=>[...document.querySelectorAll('.message.assistant.chat')].some(e=>e.textContent.includes('回答：网页消息也同步到微信')));assert.equal(f.fake.sent.filter(s=>s.text==='[User]: 网页消息也同步到微信').length,1);
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aTfoAAAAASUVORK5CYII=','base64');
@@ -96,7 +96,7 @@ for(const viewport of [{width:390,height:844},{width:320,height:568},{width:390,
 await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.querySelector('#sidebar').getBoundingClientRect().right<=0);await page.screenshot({animations:'disabled',path:join(artifacts,'mobile.png')});
 await page.click('#menu-open');await page.waitForFunction(()=>Math.abs(document.querySelector('#sidebar').getBoundingClientRect().left)<1);await page.screenshot({animations:'disabled',path:join(artifacts,'mobile-sidebar.png')});await page.click('#sidebar-close');
 await page.fill('#chat-input','WAIT 检查断开');await page.click('#send');await page.locator('#interrupt').waitFor();
-await page.click('#pair-open');page.once('dialog',d=>d.accept());await page.click('#disconnect');await page.waitForFunction(()=>document.querySelector('#chat-input').disabled);await page.click('[data-close=pair-dialog]');
+await page.click('#pair-open');page.once('dialog',d=>d.accept());await page.click('#disconnect');await page.waitForFunction(()=>!document.querySelector('#connection-gate').hidden);await page.click('[data-close=pair-dialog]');
 await page.locator('#connection-gate').waitFor();await page.waitForFunction(()=>!document.querySelector('#pair-open').disabled);await page.screenshot({animations:'disabled',path:join(artifacts,'mobile-connect-required.png')});
 assert.equal(f.app.engine.runtimes.get(f.app.store.assistants(f.app.store.userByName('browseruser').id)[0].id).active,null);
 await page.setViewportSize({width:1440,height:960});

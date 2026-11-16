@@ -29,7 +29,12 @@ export class PlatformStore {
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS outbox_job ON outbox(job_id); CREATE UNIQUE INDEX IF NOT EXISTS jobs_manual_request ON jobs(assistant_id,request_id);');
   }
-  tx(fn) { this.db.exec('BEGIN IMMEDIATE'); try { const r = fn(); this.db.exec('COMMIT'); return r; } catch(e) { this.db.exec('ROLLBACK'); throw e; } }
+  tx(fn) {
+    const depth=this.transactionDepth||0,savepoint=`nested_${depth}`;this.db.exec(depth?`SAVEPOINT ${savepoint}`:'BEGIN IMMEDIATE');this.transactionDepth=depth+1;
+    try{const result=fn();this.db.exec(depth?`RELEASE ${savepoint}`:'COMMIT');return result;}
+    catch(error){if(depth){this.db.exec(`ROLLBACK TO ${savepoint}`);this.db.exec(`RELEASE ${savepoint}`);}else this.db.exec('ROLLBACK');throw error;}
+    finally{this.transactionDepth=depth;}
+  }
   user(id) { return this.db.prepare('SELECT id,username,role,created_at FROM users WHERE id=?').get(id); }
   userByName(name) { return this.db.prepare('SELECT * FROM users WHERE username=?').get(name); }
   addUser(username, hash, role='user') {

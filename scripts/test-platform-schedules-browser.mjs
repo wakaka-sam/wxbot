@@ -8,7 +8,7 @@ const f=await fixture(),browser=await chromium.launch({executablePath:process.en
 const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
 try{
  await page.goto(f.base);await page.click('#register-tab');await page.fill('#username','schedulebrowser');await page.fill('#password','Schedule-browser-739');await page.click('#auth-submit');
- await page.locator('#schedules-open').waitFor({state:'visible'});assert(await page.locator('#chat-input').isDisabled());
+ await page.locator('#schedules-open').waitFor({state:'visible'});assert(!(await page.locator('#chat-input').isDisabled()));assert(await page.locator('#send').isDisabled());
  await page.click('#schedules-open');await page.locator('#schedules-empty').waitFor({state:'visible'});
  await page.fill('#schedule-name','早间喝水');await page.fill('#schedule-prompt','提醒我喝水');await page.click('#schedule-submit');
  await page.locator('.schedule-card').waitFor();assert.equal(await page.locator('.schedule-card').count(),1);
