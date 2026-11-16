@@ -6,13 +6,16 @@ import { PlatformStore, AppError } from './store.js';
 import { Auth } from './auth.js';
 import { Engine } from './engine.js';
 import { startMailNotifications, mailOwner } from './mail-notifications.js';
+import {searchMessages,messageContext} from './history-search.js';
+import {notificationPreferences,updateNotifications} from './notification-preferences.js';
+import {normalizeSchedule,nextSchedule} from './schedule-time.js';
 import { Uploads } from './uploads.js';
 import { MEDIA_ID } from './attachments.js';
 import {listWorkspace,previewWorkspaceFile,openWorkspaceFile,changeMemory} from './workspace-files.js';
 import { describeMedia } from '../media.js';
 import { Downloads, handleDownloads } from '../downloads.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
-const publicFiles={'/':['index.html','text/html; charset=utf-8'],'/commands.js':['commands.js','text/javascript; charset=utf-8'],'/command-catalog.js':['../../src/platform/command-catalog.js','text/javascript; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/uploads.js':['uploads.js','text/javascript; charset=utf-8'],'/files.js':['files.js','text/javascript; charset=utf-8'],'/schedules.js':['schedules.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
+const publicFiles={'/workspace-tools.js':['workspace-tools.js','text/javascript; charset=utf-8'],'/task-templates.js':['../../src/platform/task-templates.js','text/javascript; charset=utf-8'],'/':['index.html','text/html; charset=utf-8'],'/commands.js':['commands.js','text/javascript; charset=utf-8'],'/command-catalog.js':['../../src/platform/command-catalog.js','text/javascript; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/uploads.js':['uploads.js','text/javascript; charset=utf-8'],'/files.js':['files.js','text/javascript; charset=utf-8'],'/schedules.js':['schedules.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY',
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
 export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR||join(root,'platform-data')),publicUrl=process.env.PLATFORM_PUBLIC_URL,adminUsername=process.env.PLATFORM_ADMIN_USERNAME||'admin',adminPassword=process.env.PLATFORM_ADMIN_PASSWORD,engineOptions={},downloadTokenFile=process.env.WXBOT_DOWNLOAD_TOKEN_FILE}={}){
@@ -83,6 +86,23 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    }
    const match=path.match(/^\/api\/assistants\/([a-f0-9-]+)(?:\/(.+))?$/);if(!match)throw new AppError(404,'接口不存在');
    const[,id,action='']=match,a=store.owned(id,user,req.method==='GET'),readOnly=a.user_id!==user.id;
+   if(['history/search','history/context','notifications'].includes(action)){
+    if(readOnly)throw new AppError(403,'只能查看或设置自己的助手');
+    if(action==='notifications'){
+     if(req.method==='GET')return send(200,notificationPreferences(store,id));
+     const result=updateNotifications(store,id,body);store.audit(user.id,'notifications',id);engine.deliver(id);return send(200,result);
+    }
+    if(req.method!=='GET')throw new AppError(405,'历史查询只读');
+    auth.rate(`search:${user.id}`,60,60000);
+    return send(200,action==='history/search'?searchMessages(store,id,{q:url.searchParams.get('q'),before:Number(url.searchParams.get('before')||Number.MAX_SAFE_INTEGER)}):messageContext(store,id,Number(url.searchParams.get('seq'))));
+   }
+   if(action==='schedules/preview'){
+    if(readOnly)throw new AppError(403,'只能管理自己的自动任务');
+    if(req.method!=='POST')throw new AppError(405,'请提交时间规则');
+    const now=Date.now(),spec=normalizeSchedule(body.spec,now),times=[];let after=now;
+    for(let i=0;i<3;i++){const next=nextSchedule(spec,after,now);if(next===null)break;times.push(next);if(spec.type==='once')break;after=next;}
+    return send(200,{spec,times});
+   }
    if(action==='schedules'||action.startsWith('schedules/')){
     if(readOnly)throw new AppError(403,'只能管理自己的自动任务');
     if(action!=='schedules'){const m=action.match(/^schedules\/([a-f0-9-]+)\/runs$/);if(!m||req.method!=='GET')throw new AppError(404,'接口不存在');return send(200,engine.schedules.history(id,m[1],{before:Number(url.searchParams.get('before')||Number.MAX_SAFE_INTEGER)}));}
@@ -147,7 +167,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    }
    if(action==='activate'||action==='deactivate')throw new AppError(410,'默认助手无需激活或停止，请使用微信连接管理');
    if(action==='rename'){store.rename(id,user,body.name);return send(200,{assistant:engine.snapshot(id)});}
-   if(action==='messages'){auth.rate(`message:${user.id}`,120,60000);return send(202,engine.submit(id,body.text,'web',body.requestId,body.attachments));}
+   if(action==='messages'){auth.rate(`message:${user.id}`,120,60000);return send(202,await engine.submit(id,body.text,'web',body.requestId,body.attachments));}
    if(action==='interrupt'){await engine.interrupt(id);return send(200,{assistant:engine.snapshot(id)});}
    if(action.startsWith('channel/'))return send(200,{assistant:await engine.channelCommand(id,action.slice(8),body)});
    throw new AppError(404,'接口不存在');

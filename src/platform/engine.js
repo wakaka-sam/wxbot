@@ -4,6 +4,8 @@ import { mkdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError } from './store.js';
 import { parseCommand,submitCommand } from './commands.js';
+import {submitMemoryCommand} from './memory-commands.js';
+import {notificationPreferences,isQuiet,notificationKind,buildDigests} from './notification-preferences.js';
 import { Schedules } from './schedules.js';
 import { migrateSingleAssistant } from './single-assistant.js';
 import { WechatChannel } from './adapters/wechat.js';
@@ -21,6 +23,7 @@ export class Engine extends EventEmitter {
   async init(){await migrateSingleAssistant(this.store,this.dir);this.store.recover();this.schedules.settle();for(const a of this.store.assistants()){const r=await this.runtime(a);if(a.active){await r.channel.start();this.reconcile(a.id,r);this.wake(a.id);this.deliver(a.id);}}this.tickSchedules();this.scheduleTimer=setInterval(()=>this.tickSchedules(),10000);this.scheduleTimer.unref();}
   tickSchedules(now=Date.now()){
     if(this.closed)return;
+    for(const id of this.runtimes.keys())this.deliver(id);
     for(const task of this.schedules.due(now)){
       if(!this.connected(task.assistant_id))continue;
       try{const result=this.schedules.enqueue(task.id,now);if(result){this.publish(result.assistantId,'message',result.message);this.wake(result.assistantId);}}
@@ -69,7 +72,7 @@ export class Engine extends EventEmitter {
       }});
       const r={channel,harness:this.harnessFactory({dir:join(dir,'harness'),userId:a.user_id}),draining:null,delivering:null,active:null,command:Promise.resolve(),stateStamp:'',lastPhase:null,connectionStop:null};
       this.runtimes.set(a.id,r);
-      channel.on('input',input=>{try{this.submit(a.id,input.text,'wechat',input.id,input.attachments);}catch(error){this.publish(a.id,'error',{message:error.message});}});
+      channel.on('input',input=>{try{Promise.resolve(this.submit(a.id,input.text,'wechat',input.id,input.attachments)).catch(error=>this.publish(a.id,'error',{message:error.message}));}catch(error){this.publish(a.id,'error',{message:error.message});}});
       channel.on('state',state=>{
         const previous=r.lastPhase;r.lastPhase=state.phase;
         const stamp=JSON.stringify(state);if(stamp!==r.stateStamp){r.stateStamp=stamp;this.publish(a.id,'assistant',this.snapshot(a.id));}
@@ -120,12 +123,12 @@ export class Engine extends EventEmitter {
     const next=r.command.catch(()=>{}).then(async()=>{this.requireActive(id);if(action==='login')await r.channel.login();else if(action==='verify')await r.channel.verify(body.code);else if(action==='disconnect'){await r.channel.disconnect();await this.pauseDisconnected(id,r);}else throw new AppError(404,'操作不存在');return this.snapshot(id);});
     r.command=next;return next;
   }
-  reconcile(id,r){for(const m of r.channel.history())this.submit(id,m.text,'wechat',m.id,m.attachments);}
+  reconcile(id,r){for(const m of r.channel.history())Promise.resolve(this.submit(id,m.text,'wechat',m.id,m.attachments)).catch(error=>this.publish(id,'error',{message:error.message}));}
   submit(id,text,source='web',key=randomUUID(),attachments=[]){
     this.requireActive(id);attachments=source==='wechat'?normalizeAttachments(attachments):this.uploads?.resolve(id,attachments)||[];
     if(typeof text!=='string'||(!text.trim()&&!attachments.length)||text.length>20000)throw new AppError(400,'消息须为 1–20000 个字符');
     if(typeof key!=='string'||key.length>500)throw new AppError(400,'请求标识无效');
-    const command=parseCommand(text);if(command)return submitCommand(this,id,text.trim(),source,key,command,attachments);
+    const command=parseCommand(text);if(command)return (command.name==='memory'?submitMemoryCommand:submitCommand)(this,id,text.trim(),source,key,command,attachments);
     if(source==='web')this.requireConnected(id);
     if(text.trimStart().startsWith('//'))text=text.trimStart().slice(1);
     const messageId=randomUUID();
@@ -146,8 +149,9 @@ export class Engine extends EventEmitter {
     for(let i=0;i<points.length;i+=size)deliveries.push({id:uuidFor(`${key}:${i}`),payload:{text:prefix+points.slice(i,i+size).join(''),binding:{accountId:binding.id,userId:binding.userId}}});
     return deliveries;
   }
-  enqueueText(id,text,key,jobId=null){
-    for(const delivery of this.textDeliveries(id,text,key))this.store.queueDelivery(delivery.id,id,delivery.payload,jobId);
+  enqueueText(id,text,key,jobId=null,notice=null){
+    notice||=jobId&&this.store.db.prepare('SELECT kind FROM jobs WHERE id=?').get(jobId)?.kind==='schedule'?'task':'reply';
+    for(const delivery of this.textDeliveries(id,text,key))this.store.queueDelivery(delivery.id,id,{...delivery.payload,notice},jobId);
     this.deliver(id);
   }
   async sendFromTool(id,run,binding,request){
@@ -161,7 +165,7 @@ export class Engine extends EventEmitter {
     const current=r.channel.snapshot().account;
     if(!binding||current?.id!==binding.id||current?.userId!==binding.userId)throw new AppError(409,'本轮微信绑定已失效，请重新连接后再发送');
     const deliveryId=uuidFor(`wxbot-send:${id}:${run.jobId}:${requestId}`);
-    const payload={text,binding:{accountId:binding.id,userId:binding.userId}};
+    const payload={text,binding:{accountId:binding.id,userId:binding.userId},notice:run.scheduled?'task':'direct'};
     const prior=this.store.delivery(deliveryId);
     const contentHash=attachment?sendHash(text,attachment):null;
     const previous=prior?JSON.parse(prior.payload):null;
@@ -187,7 +191,7 @@ export class Engine extends EventEmitter {
       this.deliver(id);
       if(!r.delivering)break;
       await r.delivering;
-    }while(!this.closed&&!run.interrupted&&this.store.assistant(id)?.active&&r.blockedQuotaEpoch==null&&['pending','sending'].includes(this.store.delivery(deliveryId).state));
+    }while(!this.closed&&!run.interrupted&&this.store.assistant(id)?.active&&r.blockedQuotaEpoch==null&&!r.notificationDeferred&&['pending','sending'].includes(this.store.delivery(deliveryId).state));
     const receipt=this.store.delivery(deliveryId);
     if(receipt.state!=='failed'&&text.trim())run.explicitTexts.add(text.trim());
     const unresolved=['pending','sending'].includes(receipt.state);
@@ -198,12 +202,15 @@ export class Engine extends EventEmitter {
     const r=this.runtimes.get(id);if(!r||r.delivering||this.closed||!this.store.assistant(id)?.active)return;
     if(!this.connected(id))return;
     if(r.blockedQuotaEpoch!=null&&r.blockedQuotaEpoch===(r.channel.snapshot().replyBudget?.epoch??0))return;
-    r.blockedQuotaEpoch=null;
+    r.blockedQuotaEpoch=null;r.notificationDeferred=false;
     // Install the drain guard before send() can synchronously emit channel state.
     r.delivering=Promise.resolve().then(async()=>{
+      const prefs=notificationPreferences(this.store,id);buildDigests(this,id,prefs);
       for(const row of this.store.deliveries(id)){
         if(this.closed||!this.store.assistant(id)?.active||!this.connected(id))break;
-        const p=JSON.parse(row.payload);
+        const p=JSON.parse(row.payload),notice=notificationKind(this.store,row,p);
+        if(notice==='progress'&&prefs.finalOnly){this.store.deliveryState(row.id,'skipped','按通知偏好仅推送最终回复');continue;}
+        if((notice!=='direct'&&isQuiet(prefs))||(notice==='task'&&!p.attachment&&prefs.digestMinutes)){r.notificationDeferred=true;continue;}
         if(!p.attachment&&TOOL_STATUS_TEXTS.has(p.text.trim())){this.store.deliveryState(row.id,'skipped');continue;}
         this.store.deliveryState(row.id,'sending');
         try{const result=p.attachment?await r.channel.sendAttachment(p.attachment,row.id,p.binding):await r.channel.send(p.text,row.id,p.binding);
@@ -226,7 +233,7 @@ export class Engine extends EventEmitter {
         catch(error){this.store.deliveryState(row.id,'failed',error.message);}
         this.publish(id,'delivery',{id:row.id});
       }
-    }).finally(()=>{r.delivering=null;if(!this.closed&&this.store.assistant(id)?.active&&this.store.deliveries(id).length&&
+    }).catch(error=>{r.notificationDeferred=true;this.publish(id,'error',{message:`通知队列暂时不可用：${error.message}`});}).finally(()=>{r.delivering=null;if(!this.closed&&this.store.assistant(id)?.active&&this.store.deliveries(id).length&&!r.notificationDeferred&&
       (r.blockedQuotaEpoch==null||r.blockedQuotaEpoch!==(r.channel.snapshot().replyBudget?.epoch??0)))queueMicrotask(()=>this.deliver(id));});r.delivering.catch(()=>{});
   }
   wake(id){
@@ -251,7 +258,7 @@ export class Engine extends EventEmitter {
         if(!complete)return;
         if(run.explicitTexts.has(item.text.trim())){item.sent=item.text.length;return;}
         if(item.text.length>item.sent){
-          this.enqueueText(id,item.text.slice(item.sent),`${item.id}:${item.sent}`,job.id);item.sent=item.text.length;
+          this.enqueueText(id,item.text.slice(item.sent),`${item.id}:${item.sent}`,job.id,item.phase==='commentary'?'progress':run.scheduled?'task':'reply');item.sent=item.text.length;
         }
       };
       try{

@@ -1,3 +1,4 @@
+import {TASK_TEMPLATES,templateDraft} from './task-templates.js';
 const $=s=>document.querySelector(s);
 const stateNames={active:'已启用',paused:'已暂停',queued:'等待执行',completed:'已结束',cancelled:'已取消'};
 const jobNames={pending:'排队中',running:'执行中',done:'执行完成',failed:'执行失败',interrupted:'执行中断',cancelled:'已取消'};
@@ -14,9 +15,9 @@ export function createScheduleManager({api,newRequestId}){
  let assistantId=null,generation=0,busy=false,pending=null,editing=null,refreshing=false;
  const dialog=$('#schedules-dialog'),error=$('#schedules-error'),runRequests=new Map(),openHistory=new Set();
  function fail(e){error.textContent=e.message;error.hidden=false;}
- function resetForm(){editing=null;pending=null;$('#schedule-form').reset();$('#schedule-submit').textContent='创建任务';$('#schedule-edit-cancel').hidden=true;fields();}
+ function resetForm(){$('#template-controls').hidden=false;$('#template-options').hidden=true;$('#schedule-preview-result').textContent='';editing=null;pending=null;$('#schedule-form').reset();$('#schedule-submit').textContent='创建任务';$('#schedule-edit-cancel').hidden=true;fields();}
  function edit(task){
-  editing=task;pending=null;$('#schedule-name').value=task.name;$('#schedule-prompt').value=task.prompt;$('#schedule-mode').value=task.mode;
+  $('#template-controls').hidden=true;$('#schedule-preview-result').textContent='';editing=task;pending=null;$('#schedule-name').value=task.name;$('#schedule-prompt').value=task.prompt;$('#schedule-mode').value=task.mode;
   $('#schedule-type').value=task.spec.type;$('#schedule-at').value=localInput(task.spec.at);$('#schedule-minutes').value=task.spec.minutes||30;
   $('#schedule-time').value=task.spec.time||'09:00';$('#schedule-timezone').value=task.spec.timezone||'Asia/Shanghai';$('#schedule-weekday').value=task.spec.weekday??1;$('#schedule-day').value=task.spec.day||1;$('#schedule-until').value=localInput(task.spec.until);
   $('#schedule-submit').textContent='保存修改';$('#schedule-edit-cancel').hidden=false;fields();$('#schedule-form').scrollIntoView({block:'start'});$('#schedule-name').focus();
@@ -75,17 +76,25 @@ export function createScheduleManager({api,newRequestId}){
  $('#schedules-refresh').onclick=()=>refresh().catch(fail);$('#schedule-edit-cancel').onclick=resetForm;
  $('#schedules-close').onclick=()=>dialog.close();
  dialog.addEventListener('close',()=>{generation++;assistantId=null;pending=null;openHistory.clear();resetForm();});
- $('#schedule-form').onsubmit=async event=>{
-  event.preventDefault();if(busy||!assistantId)return;
+ function formSpec(){
   const type=$('#schedule-type').value;
   const spec=type==='once'?{type,at:$('#schedule-at').value+':00+08:00'}:type==='interval'?{type,minutes:Number($('#schedule-minutes').value)}:{type,time:$('#schedule-time').value,timezone:$('#schedule-timezone').value.trim(),...(type==='weekly'?{weekday:Number($('#schedule-weekday').value)}:type==='monthly'?{day:Number($('#schedule-day').value)}:{})};
   if(type!=='once'&&$('#schedule-until').value)spec.until=$('#schedule-until').value+':00+08:00';
+  return spec;
+ }
+ $('#schedule-form').onsubmit=async event=>{
+  event.preventDefault();if(busy||!assistantId)return;const spec=formSpec();
   const body={action:editing?'update':'add',...(editing?{id:editing.id,version:editing.version}:{}),mode:$('#schedule-mode').value,name:$('#schedule-name').value.trim(),prompt:$('#schedule-prompt').value.trim(),spec};
   const fingerprint=JSON.stringify(body);if(!pending||pending.fingerprint!==fingerprint)pending={fingerprint,requestId:newRequestId()};
   const id=assistantId,g=generation;busy=true;error.hidden=true;$('#schedule-submit').disabled=true;
   try{await api(`/assistants/${id}/schedules`,{...body,...(!editing?{requestId:pending.requestId}:{})});if(g!==generation)return;resetForm();await refresh();}
   catch(e){if(g===generation)fail(e);}finally{busy=false;$('#schedule-submit').disabled=false;}
  };
+ for(const t of TASK_TEMPLATES){const option=el('option',t.name);option.value=t.id;$('#schedule-template').append(option);}
+ $('#schedule-template').onchange=()=>{const t=TASK_TEMPLATES.find(t=>t.id===$('#schedule-template').value);$('#template-options').hidden=!t;if(t)$('#template-topic').value=t.topic;};
+ $('#template-apply').onclick=()=>{try{const draft=templateDraft($('#schedule-template').value,$('#template-topic').value);$('#schedule-name').value=draft.name;$('#schedule-mode').value=draft.mode;$('#schedule-prompt').value=draft.prompt;$('#schedule-type').value=draft.spec.type;$('#schedule-time').value=draft.spec.time;$('#schedule-timezone').value=draft.spec.timezone;$('#schedule-weekday').value=draft.spec.weekday??1;$('#schedule-until').value='';$('#schedule-preview-result').textContent='';fields();}catch(e){fail(e);}};
+ $('#schedule-form').addEventListener('input',()=>{$('#schedule-preview-result').textContent='';});
+ $('#schedule-preview').onclick=async()=>{const id=assistantId,g=generation,spec=formSpec(),fingerprint=JSON.stringify(spec);$('#schedule-preview').disabled=true;try{const data=await api(`/assistants/${id}/schedules/preview`,{spec});if(g===generation&&fingerprint===JSON.stringify(formSpec()))$('#schedule-preview-result').textContent='接下来：'+data.times.map(t=>at(t)).join('；')+'（北京时间）';}catch(e){if(g===generation)fail(e);}finally{$('#schedule-preview').disabled=false;}};
  setInterval(()=>{if(dialog.open&&!document.hidden&&!busy&&!editing&&!openHistory.size)void refresh().catch(fail);},10000);
  fields();
  return {open(id){generation++;assistantId=id;error.hidden=true;$('#schedules-list').replaceChildren();$('#schedules-empty').hidden=true;dialog.showModal();void refresh().catch(fail);},reset(){generation++;assistantId=null;pending=null;runRequests.clear();dialog.close();resetForm();}};

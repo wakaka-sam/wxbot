@@ -2,6 +2,10 @@ import { randomUUID,createHash } from 'node:crypto';
 import { AppError } from './store.js';
 import { COMMANDS,COMMAND_ALIASES,parseCommand } from './command-catalog.js';
 import { RUNTIME_LIMITS } from './runtime-limits.js';
+import {searchMessages,messageContext} from './history-search.js';
+import {notificationPreferences,updateNotifications} from './notification-preferences.js';
+import {TASK_TEMPLATES,templateDraft} from './task-templates.js';
+import {normalizeSchedule,nextSchedule} from './schedule-time.js';
 import { MAX_MEDIA_SIZE } from '../media.js';
 export {parseCommand};
 const states={active:'启用',paused:'暂停',queued:'等待执行',completed:'结束',cancelled:'取消',pending:'排队',running:'执行中',done:'完成',failed:'失败',interrupted:'中断'};
@@ -31,6 +35,40 @@ function perform(engine,id,command,requestId,now){
  const {name,args}=command,words=args?args.split(/\s+/):[];
  const a=engine.store.assistant(id),runtime=engine.runtimes.get(id),connection=runtime?.channel.snapshot();
  if(name==='help')return {text:help(args)};
+ if(name==='search'){
+  const m=args.match(/^(?:before:(\d+)\s+)?([\s\S]+)$/);if(!m)invalid('用法：/search 关键词');
+  const h=searchMessages(engine.store,id,{q:m[2],before:m[1]?Number(m[1]):Number.MAX_SAFE_INTEGER,limit:5});
+  return {text:h.results.length?h.results.map(r=>`${time(r.created_at)} · ${r.role==='user'?'你':'助手/系统'} · #${r.seq}\n${r.excerpt}\n原文：/message ${r.seq}`).join('\n\n')+(h.nextBefore?`\n下一页：/search before:${h.nextBefore} ${h.q}`:''):'未找到匹配消息。搜索普通对话和任务结果，不包含快捷命令回执。'};
+ }
+ if(name==='message'){
+  const h=messageContext(engine.store,id,Number(args)),m=h.messages.find(m=>m.seq===h.seq);
+  return {text:`#${m.seq} · ${time(m.created_at)}\n${m.text.slice(0,4000)}${m.text.length>4000?'\n内容较长，请在网页历史搜索查看全文。':''}${m.attachments?.length?'\n附件请在网页原消息中查看。':''}`};
+ }
+ if(name==='notify'){
+  let patch;
+  if(args){
+   if(args==='quiet off')patch={quiet:null};
+   else if(/^quiet ([01]\d|2[0-3]):[0-5]\d ([01]\d|2[0-3]):[0-5]\d$/.test(args))patch={quiet:{start:words[1],end:words[2]}};
+   else if(/^final (on|off)$/.test(args))patch={finalOnly:words[1]==='on'};
+   else if(/^digest (off|[0-9]+)$/.test(args))patch={digestMinutes:words[1]==='off'?0:Number(words[1])};
+   else invalid('用法：/notify；/notify quiet 23:00 08:00；/notify quiet off；/notify final on|off；/notify digest 30|off');
+  }
+  const p=patch?updateNotifications(engine.store,id,patch):notificationPreferences(engine.store,id);
+  return {text:`通知偏好${patch?'已保存':''}\n免打扰：${p.quiet?p.quiet.start+'–'+p.quiet.end+'（北京时间）':'关闭'}\n只推最终回复：${p.finalOnly?'开启':'关闭'}\n任务文字摘要：${p.digestMinutes?p.digestMinutes+' 分钟合并一次':'关闭'}\n免打扰仅延后自动回复和任务通知，网页照常显示；命令回执与主动发送不受影响。附件不合并，轻量提醒也受免打扰和摘要设置影响。`};
+ }
+ if(name==='templates'){
+  if(args)invalid('用法：/templates');
+  return {text:'任务模板\n'+TASK_TEMPLATES.map(t=>`${t.id} — ${t.name}\n/template ${t.id} preview ${t.time} ${t.topic}`).join('\n\n')+'\n先 preview 预览，改为 create 才会创建。网页“自动任务”也可选择模板。'};
+ }
+ if(name==='template'){
+  const m=args.match(/^(\w+)\s+(preview|create)\s+(\S+)\s+([\s\S]+)$/);if(!m)invalid('用法：/template morning preview 09:00 科技动态；把 preview 改为 create 创建');
+  let draft,spec;try{draft=templateDraft(m[1],m[4],m[3]);spec=normalizeSchedule(draft.spec,now);}catch(e){invalid(e.message);}
+  const next=nextSchedule(spec,now);
+  if(m[2]==='preview')return {text:`模板：${draft.name}\n规则：${rule(spec)}\n下次：${time(next)}（北京时间）\n内容：${draft.prompt}\n尚未创建。创建：/template ${m[1]} create ${m[3]} ${m[4]}`};
+  const task=engine.schedules.request(id,{action:'add',requestId,...draft,spec},now).task;
+  return {text:`已创建：${task.name}\nID：${task.id}\n下次：${time(task.next_run_at)}（北京时间）\n/task ${task.id} 查看或管理。`};
+ }
+
  if(['status','settings','whoami','stop'].includes(name)&&args)invalid(help(name));
  if(name==='whoami')return {text:`账号：${engine.store.user(a.user_id).username}\n助手：${a.name}\n角色：${engine.store.user(a.user_id).role==='admin'?'管理员':'普通用户'}\n仅操作当前账号自己的任务、会话和文件。`};
  if(name==='settings')return {text:`当前参数（只读）\n模型：${runtime?.harness.model||process.env.PLATFORM_MODEL||'gpt-6-astra'}\n默认时区：Asia/Shanghai（北京时间）\n自动任务：最多 20 个未结束，间隔最短 1 分钟\n附件：每条最多 10 个，网页总量 ${MAX_MEDIA_SIZE/1024/1024} MB\n智能执行：单轮最多 ${RUNTIME_LIMITS.turnTimeout/60000} 分钟，无活动 ${RUNTIME_LIMITS.stallTimeout/60000} 分钟停止\n工具错误：连续 ${RUNTIME_LIMITS.maxToolFailures} 次失败或任务工具同错 ${RUNTIME_LIMITS.sameScheduleErrors} 次停止\n微信：每次新微信输入后最多 ${connection?.replyBudget?.limit||10} 条回复，网页输入不刷新额度\n轻量提醒到点不调用模型；/status 查看实时状态。`};
@@ -74,7 +112,7 @@ function perform(engine,id,command,requestId,now){
 }
 // Input, command mutation, receipt and optional WeChat outbox commit together.
 // Savepoints in store.tx let schedule operations participate in this transaction.
-export function submitCommand(engine,id,text,source,key,command,attachments=[]){
+export function submitCommand(engine,id,text,source,key,command,attachments=[],preparedOutcome=null){
  const store=engine.store,sourceKey=`${source}:${key}`,requestId=createHash('sha256').update(`${id}:${sourceKey}`).digest('hex');
  const result=store.tx(()=>{
   const prior=store.db.prepare('SELECT id FROM messages WHERE assistant_id=? AND source_key=?').get(id,sourceKey);
@@ -82,7 +120,7 @@ export function submitCommand(engine,id,text,source,key,command,attachments=[]){
   const message=store.addMessage(id,{id:randomUUID(),role:'user',kind:'command',text,source,sourceKey,attachments});
   if(source==='web')engine.uploads?.claim(id,attachments);
   let outcome;
-  try{if(attachments.length)invalid('快捷命令请单独发送，不要携带附件。附件已保留在本条消息；如要分析附件，请用普通文字重新发送。');outcome=perform(engine,id,command,requestId,Date.now());}
+  try{if(attachments.length)invalid('快捷命令请单独发送，不要携带附件。附件已保留在本条消息；如要分析附件，请用普通文字重新发送。');outcome=preparedOutcome||perform(engine,id,command,requestId,Date.now());}
   catch(error){if(!(error instanceof AppError))throw error;outcome={text:`命令未执行：${error.message}`,error:true};}
   // WeChat folds soft line breaks; separate command rows as paragraphs.
   const reply=store.addMessage(id,{role:'system',kind:'command',source:'command',sourceKey:'command-reply:'+sourceKey,text:outcome.text.replace(/\n+/g,'\n\n'),state:outcome.error?'error':'complete'});

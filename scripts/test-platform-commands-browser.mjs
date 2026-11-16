@@ -10,7 +10,7 @@ try{
  await page.goto(f.base);await page.click('#register-tab');await page.fill('#username','commandbrowser');await page.fill('#password','Commands-browser-739');await page.click('#auth-submit');await page.locator('#schedules-open').waitFor({state:'visible'});
  const id=f.app.store.assistants(f.app.store.userByName('commandbrowser').id)[0].id,r=f.app.engine.runtimes.get(id);
  await page.fill('#chat-input','普通文字');assert(await page.locator('#send').isDisabled());
- await page.fill('#chat-input','/');await page.locator('#command-menu').waitFor({state:'visible'});assert.equal(await page.locator('#command-menu button').count(),8);
+ await page.fill('#chat-input','/');await page.locator('#command-menu').waitFor({state:'visible'});assert.equal(await page.locator('#command-menu button').count(),14);
  await page.fill('#chat-input','/sta');await page.keyboard.press('Tab');assert.equal(await page.inputValue('#chat-input'),'/status');await page.keyboard.press('Enter');
  await page.locator('.message.system.command').filter({hasText:'微信：未连接'}).waitFor();assert.equal(f.fake.runs.length,0);
  await page.fill('#chat-input','/remind 30m 浏览器喝水');await page.click('#send');await page.locator('.message.system.command').filter({hasText:'已创建轻量提醒'}).waitFor();assert.equal(f.app.engine.schedules.list(id).length,1);

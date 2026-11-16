@@ -3,7 +3,7 @@ export {parseCommand};
 export function createCommandMenu({input,menu,toggle,enabled,onChange}){
  let selected=0,explicit=false,dismissed=false,lastQuery='',matches=[];
  function hide(){menu.hidden=true;input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');}
- function choose(command){input.value='/'+command.name+(['help','tasks','task','remind'].includes(command.name)?' ':'');explicit=false;dismissed=true;hide();input.focus();input.setSelectionRange(input.value.length,input.value.length);onChange();}
+ function choose(command){input.value='/'+command.name+(['help','tasks','task','remind','search','message','notify','memory','template'].includes(command.name)?' ':'');explicit=false;dismissed=true;hide();input.focus();input.setSelectionRange(input.value.length,input.value.length);onChange();}
  function refresh(){
   if(!enabled()){hide();return;}
   const query=input.value.trim(),isPrefix=/^\/[a-z?_-]*$/i.test(query);
