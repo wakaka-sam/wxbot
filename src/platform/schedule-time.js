@@ -12,7 +12,7 @@ function formatter(zone){
 function parts(at,zone){return Object.fromEntries(formatter(zone).formatToParts(at).filter(p=>p.type!=='literal').map(p=>[p.type,Number(p.value)]));}
 function wall(p){return Date.UTC(p.year,p.month-1,p.day,p.hour||0,p.minute||0);}
 function exactKeys(value,keys){if(Object.keys(value).some(k=>!keys.includes(k)))throw new Error('时间规则包含不支持的字段');}
-export function normalizeSchedule(value,now=Date.now()){
+function normalizeRule(value,now){
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('缺少时间规则');
  if(value.type==='once'){
   exactKeys(value,['type','at']);
@@ -28,8 +28,8 @@ export function normalizeSchedule(value,now=Date.now()){
   if(!Number.isInteger(value.minutes)||value.minutes<1||value.minutes>525600)throw new Error('执行间隔须为 1–525600 整数分钟');
   return {type:'interval',minutes:value.minutes};
  }
- if(!['daily','weekly'].includes(value.type))throw new Error('支持 once、interval、daily、weekly 时间规则');
- exactKeys(value,value.type==='weekly'?['type','time','timezone','weekday']:['type','time','timezone']);
+ if(!['daily','weekly','workdays','monthly'].includes(value.type))throw new Error('支持 once、interval、daily、weekly、workdays、monthly 时间规则');
+ exactKeys(value,value.type==='weekly'?['type','time','timezone','weekday']:value.type==='monthly'?['type','time','timezone','day']:['type','time','timezone']);
  if(typeof value.time!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(value.time))throw new Error('时间须为 HH:mm（24 小时制）');
  const timezone=value.timezone??'Asia/Shanghai';
  if(typeof timezone!=='string'||timezone.length>80)throw new Error('时区无效');
@@ -39,18 +39,21 @@ export function normalizeSchedule(value,now=Date.now()){
   if(!Number.isInteger(value.weekday)||value.weekday<0||value.weekday>6)throw new Error('星期须为 0–6（0 为周日）');
   spec.weekday=value.weekday;
  }
+ if(value.type==='monthly'){if(!Number.isInteger(value.day)||value.day<1||value.day>31)throw new Error('每月日期须为 1–31；不存在的日期跳过');spec.day=value.day;}
  return spec;
 }
-export function nextSchedule(spec,after,anchor=after){
+function nextRule(spec,after,anchor=after){
  if(spec.type==='once')return Date.parse(spec.at);
  if(spec.type==='interval'){
   const step=spec.minutes*MINUTE;
   return anchor+(Math.max(0,Math.floor((after-anchor)/step))+1)*step;
  }
  const local=parts(after,spec.timezone),day=Date.UTC(local.year,local.month-1,local.day),[hour,minute]=spec.time.split(':').map(Number);
- for(let i=0;i<(spec.type==='weekly'?16:9);i++){
+ for(let i=0;i<(spec.type==='monthly'?370:16);i++){
   const date=new Date(day+i*DAY);
   if(spec.type==='weekly'&&date.getUTCDay()!==spec.weekday)continue;
+  if(spec.type==='workdays'&&[0,6].includes(date.getUTCDay()))continue;
+  if(spec.type==='monthly'&&date.getUTCDate()!==spec.day)continue;
   const target=day+i*DAY+hour*3600000+minute*MINUTE;
   // Sample both sides of DST. Missing wall times are skipped; ambiguous wall
   // times fire only at the first occurrence, never twice on a fall-back day.
@@ -59,4 +62,20 @@ export function nextSchedule(spec,after,anchor=after){
   if(candidates.length&&candidates[0]>after)return candidates[0];
  }
  throw new Error('无法计算下次执行时间');
+}
+
+export function normalizeSchedule(value,now=Date.now()){
+ if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('缺少时间规则');
+ const {until,...rule}=value,spec=normalizeRule(rule,now);
+ if(until!==undefined){
+  if(typeof until!=='string'||!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(until)||!Number.isFinite(Date.parse(until))||Date.parse(until)<=now)throw new Error('截止时间须为含时区的未来 ISO 时间');
+  const date=until.slice(0,10),parsed=Date.parse(date+'T00:00:00Z');if(!Number.isFinite(parsed)||new Date(parsed).toISOString().slice(0,10)!==date)throw new Error('截止日期无效');
+  spec.until=new Date(until).toISOString();
+  if(nextSchedule(spec,now)===null)throw new Error('截止时间之前没有可执行时间');
+ }
+ return spec;
+}
+export function nextSchedule(spec,after,anchor=after){
+ const next=nextRule(spec,after,anchor);
+ return spec.until&&next>Date.parse(spec.until)?null:next;
 }

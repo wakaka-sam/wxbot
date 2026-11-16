@@ -29,8 +29,14 @@ export class Engine extends EventEmitter {
   scheduleFromTool(id,run,request){
     if(this.closed||this.runtimes.get(id)?.active!==run||run.interrupted)throw new AppError(409,'任务管理轮次已结束');
     this.requireActive(id);
-    if(run.scheduled&&request?.action!=='list')throw new AppError(403,'自动执行期间不能创建或修改自动任务');
-    return this.schedules.request(id,request);
+    if(run.scheduled&&!['list','history'].includes(request?.action))throw new AppError(403,'自动执行期间不能创建或修改自动任务');
+    return this.requestSchedule(id,request);
+  }
+  requestSchedule(id,request){
+    const result=this.schedules.request(id,request);
+    if(result.message)this.publish(id,'message',result.message);
+    if(result.jobId)this.wake(id);
+    this.publish(id,'schedules',{});return result;
   }
   async runtime(a){
     if(this.runtimes.has(a.id))return this.runtimes.get(a.id);
@@ -115,13 +121,13 @@ export class Engine extends EventEmitter {
   }
   reconcile(id,r){for(const m of r.channel.history())this.submit(id,m.text,'wechat',m.id,m.attachments);}
   submit(id,text,source='web',key=randomUUID(),attachments=[]){
-    this.requireActive(id);if(source==='web')this.requireConnected(id);attachments=source==='wechat'?normalizeAttachments(attachments):[];
+    this.requireActive(id);if(source==='web')this.requireConnected(id);attachments=source==='wechat'?normalizeAttachments(attachments):this.uploads?.resolve(id,attachments)||[];
     if(typeof text!=='string'||(!text.trim()&&!attachments.length)||text.length>20000)throw new AppError(400,'消息须为 1–20000 个字符');
     if(typeof key!=='string'||key.length>500)throw new AppError(400,'请求标识无效');
     const messageId=randomUUID();
     const outbound=source==='web'?this.textDeliveries(id,text.trim(),`user:${messageId}`,'[User]: '):[];
     // Commit the input, model job and channel mirror together; retries cannot lose or duplicate the mirror.
-    const result=this.store.submit(id,text.trim(),source,`${source}:${key}`,'chat',{messageId,outbound,attachments});if(result.duplicate)return result;
+    const result=this.store.submit(id,text.trim(),source,`${source}:${key}`,'chat',{messageId,outbound,attachments,onSubmit:message=>{if(source==='web')this.uploads?.claim(id,message.attachments);}});if(result.duplicate)return result;
     this.publish(id,'message',result.message);
     if(source==='wechat')this.publish(id,'assistant',this.snapshot(id));
     this.deliver(id);
@@ -136,8 +142,8 @@ export class Engine extends EventEmitter {
     for(let i=0;i<points.length;i+=size)deliveries.push({id:uuidFor(`${key}:${i}`),payload:{text:prefix+points.slice(i,i+size).join(''),binding:{accountId:binding.id,userId:binding.userId}}});
     return deliveries;
   }
-  enqueueText(id,text,key){
-    for(const delivery of this.textDeliveries(id,text,key))this.store.queueDelivery(delivery.id,id,delivery.payload);
+  enqueueText(id,text,key,jobId=null){
+    for(const delivery of this.textDeliveries(id,text,key))this.store.queueDelivery(delivery.id,id,delivery.payload,jobId);
     this.deliver(id);
   }
   async sendFromTool(id,run,binding,request){
@@ -166,7 +172,7 @@ export class Engine extends EventEmitter {
       }
       const message=this.store.tx(()=>{
         const m=this.store.addMessage(id,{id:deliveryId,role:'assistant',text,source:'wxbot-send',jobId:run.jobId,attachments:payload.attachment?[payload.attachment]:[]});
-        this.store.queueDelivery(deliveryId,id,payload);return m;
+        this.store.queueDelivery(deliveryId,id,payload,run.jobId);return m;
       });
       this.publish(id,'message',message);
     }
@@ -187,7 +193,7 @@ export class Engine extends EventEmitter {
   deliver(id){
     const r=this.runtimes.get(id);if(!r||r.delivering||this.closed||!this.store.assistant(id)?.active)return;
     if(!this.connected(id))return;
-    if(r.blockedQuotaEpoch!=null&&r.blockedQuotaEpoch===r.channel.snapshot().replyBudget?.epoch)return;
+    if(r.blockedQuotaEpoch!=null&&r.blockedQuotaEpoch===(r.channel.snapshot().replyBudget?.epoch??0))return;
     r.blockedQuotaEpoch=null;
     // Install the drain guard before send() can synchronously emit channel state.
     r.delivering=Promise.resolve().then(async()=>{
@@ -205,8 +211,8 @@ export class Engine extends EventEmitter {
           if(result.download){
             const noticeId=uuidFor(`download-notice:${row.id}`),text=result.download.text;
             const message=this.store.tx(()=>{
-              const m=this.store.message(noticeId)||this.store.addMessage(id,{id:noticeId,role:'assistant',text,source:'download-fallback'});
-              this.store.queueDelivery(noticeId,id,{text,binding:p.binding});
+              const m=this.store.message(noticeId)||this.store.addMessage(id,{id:noticeId,role:'assistant',text,source:'download-fallback',jobId:row.job_id});
+              this.store.queueDelivery(noticeId,id,{text,binding:p.binding},row.job_id);
               return m;
             });
             this.publish(id,'message',message);
@@ -217,7 +223,7 @@ export class Engine extends EventEmitter {
         this.publish(id,'delivery',{id:row.id});
       }
     }).finally(()=>{r.delivering=null;if(!this.closed&&this.store.assistant(id)?.active&&this.store.deliveries(id).length&&
-      (r.blockedQuotaEpoch==null||r.blockedQuotaEpoch!==r.channel.snapshot().replyBudget?.epoch))queueMicrotask(()=>this.deliver(id));});r.delivering.catch(()=>{});
+      (r.blockedQuotaEpoch==null||r.blockedQuotaEpoch!==(r.channel.snapshot().replyBudget?.epoch??0)))queueMicrotask(()=>this.deliver(id));});r.delivering.catch(()=>{});
   }
   wake(id){
     if(this.closed||!this.store.assistant(id)?.active)return;
@@ -241,18 +247,22 @@ export class Engine extends EventEmitter {
         if(!complete)return;
         if(run.explicitTexts.has(item.text.trim())){item.sent=item.text.length;return;}
         if(item.text.length>item.sent){
-          this.enqueueText(id,item.text.slice(item.sent),`${item.id}:${item.sent}`);item.sent=item.text.length;
+          this.enqueueText(id,item.text.slice(item.sent),`${item.id}:${item.sent}`,job.id);item.sent=item.text.length;
         }
       };
       try{
+        if(job.execution_mode==='reminder'){
+          const message=this.store.tx(()=>{const m=this.store.addMessage(id,{role:'assistant',text:job.reminder_text,source:'reminder',jobId:job.id});for(const d of this.textDeliveries(id,m.text,`reminder:${job.id}`))this.store.queueDelivery(d.id,id,d.payload,job.id);this.store.jobState(job.id,'done');return m;});
+          this.publish(id,'message',message);this.deliver(id);continue;
+        }
         const a=this.store.assistant(id);await r.harness.prepare({threadId:a.thread_id,onThread:thread=>this.store.thread(id,thread)});
         if(this.closed||!this.store.assistant(id)?.active||!this.connected(id))throw Object.assign(new Error('助手已停止'),{code:'interrupted'});
         const attachments=selected.flatMap(j=>this.store.message(j.message_id)?.attachments||[]);
-        const prepared=await prepareAttachments(attachments,a=>r.channel.readAttachment(a),{signal:run.inputAbort.signal,stage:(file,options)=>r.harness.stageAttachment(file,options)});
+        const prepared=await prepareAttachments(attachments,a=>this.readAttachment(id,a,r),{signal:run.inputAbort.signal,stage:(file,options)=>r.harness.stageAttachment(file,options)});
         if(run.interrupted||this.closed)throw Object.assign(new Error('本轮已中断'),{code:'interrupted'});
         if(prepared.notices.length){
           const m=this.store.addMessage(id,{role:'system',kind:'status',text:'附件处理提示：\n'+prepared.notices.join('\n'),jobId:job.id});
-          this.publish(id,'message',m);this.enqueueText(id,m.text,`attachment-status:${job.id}`);
+          this.publish(id,'message',m);this.enqueueText(id,m.text,`attachment-status:${job.id}`,job.id);
         }
         const prompt=[selected.map(j=>j.prompt).join('\n\n[后续输入]\n'),prepared.text,prepared.notices.length?'附件预览说明（预览不等于完整内容，有原文件路径时可直接读取；不要编造未读取内容）：\n'+prepared.notices.join('\n'):''].filter(Boolean).join('\n\n');
         run.submitted=true;
@@ -275,11 +285,12 @@ export class Engine extends EventEmitter {
         const interrupted=run.interrupted||this.closed||error.code==='interrupted';
         for(const item of run.items.values()){sendMessage(item,true);this.publish(id,'message',this.store.updateMessage(item.id,item.text,interrupted?'interrupted':'error'));}
         const requeue=run.superseded&&!run.submitted&&!this.closed&&this.store.assistant(id)?.active;
-        for(const j of selected)this.store.jobState(j.id,requeue?'pending':interrupted?'interrupted':'failed');
-        if(!interrupted){const m=this.store.addMessage(id,{role:'system',kind:'status',text:`执行失败：${error.message}`,state:'error'});this.publish(id,'message',m);this.enqueueText(id,m.text,`error:${m.id}`);await r.harness.close();}
+        for(const j of selected)this.store.jobState(j.id,requeue?'pending':interrupted?'interrupted':'failed',error.message);
+        if(!interrupted){const m=this.store.addMessage(id,{role:'system',kind:'status',text:`执行失败：${error.message}`,state:'error',jobId:job.id});this.publish(id,'message',m);this.enqueueText(id,m.text,`error:${m.id}`,job.id);await r.harness.close();}
       }finally{this.schedules.settle();r.active=null;this.publish(id,'assistant',this.snapshot(id));}
     }
   }
+  async readAttachment(id,attachment,r=this.runtimes.get(id)){return this.uploads?.has(id,attachment.id)?this.uploads.read(id,attachment.id):r.channel.readAttachment(attachment);}
   async interrupt(id){const r=this.runtimes.get(id);this.store.cancelPending(id);this.schedules.settle();if(r?.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt();}}
   async close(){this.closed=true;clearInterval(this.scheduleTimer);await Promise.all([...this.locks.values()].map(p=>p.catch(()=>{})));for(const r of this.runtimes.values()){await r.command.catch(()=>{});await r.channel.stop();if(r.active){r.active.interrupted=true;r.active.inputAbort.abort();await r.harness.interrupt().catch(()=>{});}}
     await Promise.all([...this.runtimes.values()].map(async r=>{await r.connectionStop;await r.draining;await r.delivering;await r.harness.close();await r.channel.close();}));}

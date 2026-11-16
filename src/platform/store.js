@@ -23,6 +23,11 @@ export class PlatformStore {
       CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,actor_id TEXT,action TEXT NOT NULL,target_id TEXT,created_at TEXT NOT NULL);`);
     if(!this.db.prepare('PRAGMA table_info(messages)').all().some(c=>c.name==='attachments'))this.db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
+    for(const [table,columns] of Object.entries({jobs:{started_at:'TEXT',finished_at:'TEXT',error:'TEXT',execution_mode:"TEXT NOT NULL DEFAULT 'agent'",reminder_text:'TEXT',manual:"INTEGER NOT NULL DEFAULT 0",request_id:'TEXT'},outbox:{job_id:'TEXT',updated_at:'TEXT'}})){
+      const existing=new Set(this.db.prepare(`PRAGMA table_info(${table})`).all().map(c=>c.name));
+      for(const [column,type] of Object.entries(columns))if(!existing.has(column))this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS outbox_job ON outbox(job_id); CREATE UNIQUE INDEX IF NOT EXISTS jobs_manual_request ON jobs(assistant_id,request_id);');
   }
   tx(fn) { this.db.exec('BEGIN IMMEDIATE'); try { const r = fn(); this.db.exec('COMMIT'); return r; } catch(e) { this.db.exec('ROLLBACK'); throw e; } }
   user(id) { return this.db.prepare('SELECT id,username,role,created_at FROM users WHERE id=?').get(id); }
@@ -71,7 +76,7 @@ export class PlatformStore {
     const ts=now();this.db.prepare('INSERT INTO messages(id,assistant_id,role,kind,text,state,source,source_key,job_id,created_at,updated_at,attachments) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,a,role,kind,text,state,source,sourceKey,jobId,ts,ts,JSON.stringify(attachments));return this.message(id);
   }
   updateMessage(id,text,state='streaming'){this.db.prepare('UPDATE messages SET text=?,state=?,updated_at=? WHERE id=?').run(text,state,now(),id);return this.message(id);}
-  submit(id,text,source,key,kind='chat',{messageId,outbound=[],attachments=[]}={}){
+  submit(id,text,source,key,kind='chat',{messageId,outbound=[],attachments=[],onSubmit}={}){
     return this.tx(()=>{
       const prior=key&&this.db.prepare('SELECT * FROM messages WHERE assistant_id=? AND source_key=?').get(id,key); if(prior){
         // Backfill metadata for previously ingested WeChat history, without rerunning the model.
@@ -80,24 +85,24 @@ export class PlatformStore {
           this.db.prepare("UPDATE messages SET text='' WHERE id=?").run(prior.id);
           this.db.prepare("UPDATE jobs SET prompt='' WHERE message_id=? AND state='pending'").run(prior.id);
         }
-        return {message:this.message(prior.id),duplicate:true};
+        const message=this.message(prior.id);onSubmit?.(message);return {message,duplicate:true};
       }
       if(this.pending(id).length>=100)throw new AppError(429,'等待中的消息过多，请稍后发送');
       const jobId=randomUUID();
       const message=kind==='chat'?this.addMessage(id,{id:messageId,role:'user',text,source,sourceKey:key,jobId,attachments}):null;
       this.db.prepare('INSERT INTO jobs(id,assistant_id,message_id,prompt,kind,state,created_at) VALUES(?,?,?,?,?,?,?)').run(jobId,id,message?.id||null,text,kind,'pending',now());
       for(const delivery of outbound)this.queueDelivery(delivery.id,id,delivery.payload);
-      return {message,jobId,duplicate:false};
+      onSubmit?.(message);return {message,jobId,duplicate:false};
     });
   }
   pending(id){return this.db.prepare("SELECT * FROM jobs WHERE assistant_id=? AND state='pending' ORDER BY seq").all(id);}
-  jobState(id,state){this.db.prepare('UPDATE jobs SET state=? WHERE id=?').run(state,id);}
-  cancelPending(id){this.db.prepare("UPDATE jobs SET state='cancelled' WHERE assistant_id=? AND state='pending'").run(id);}
-  recover(){this.db.prepare("UPDATE jobs SET state='interrupted' WHERE state='running'").run();this.db.prepare("UPDATE messages SET state='interrupted' WHERE state='streaming'").run();this.db.prepare("UPDATE outbox SET state='unknown',error='服务重启，发送结果待确认' WHERE state='sending'").run();}
-  queueDelivery(id,a,payload){this.db.prepare('INSERT OR IGNORE INTO outbox(id,assistant_id,payload,state,created_at) VALUES(?,?,?,?,?)').run(id,a,JSON.stringify(payload),'pending',now());}
+  jobState(id,state,error=null){const ts=now();this.db.prepare("UPDATE jobs SET state=?,error=?,started_at=CASE WHEN ?='running' THEN COALESCE(started_at,?) ELSE started_at END,finished_at=CASE WHEN ? IN ('done','failed','interrupted','cancelled') THEN ? ELSE NULL END WHERE id=?").run(state,error,state,ts,state,ts,id);}
+  cancelPending(id){this.db.prepare("UPDATE jobs SET state='cancelled',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE assistant_id=? AND state='pending'").run(id);}
+  recover(){this.db.prepare("UPDATE jobs SET state='interrupted',error='服务重启，执行结果未确认；未自动重试',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE state='running'").run();this.db.prepare("UPDATE messages SET state='interrupted' WHERE state='streaming'").run();this.db.prepare("UPDATE outbox SET state='unknown',error='服务重启，发送结果待确认' WHERE state='sending'").run();}
+  queueDelivery(id,a,payload,jobId=null){this.db.prepare('INSERT OR IGNORE INTO outbox(id,assistant_id,payload,state,created_at,job_id,updated_at) VALUES(?,?,?,?,?,?,?)').run(id,a,JSON.stringify(payload),'pending',now(),jobId,now());}
   delivery(id){return this.db.prepare('SELECT * FROM outbox WHERE id=?').get(id);}
   deliveries(a){return this.db.prepare("SELECT * FROM outbox WHERE assistant_id=? AND state='pending' ORDER BY seq").all(a);}
-  deliveryState(id,state,error=null){this.db.prepare('UPDATE outbox SET state=?,error=? WHERE id=?').run(state,error,id);}
+  deliveryState(id,state,error=null){this.db.prepare('UPDATE outbox SET state=?,error=?,updated_at=? WHERE id=?').run(state,error,now(),id);}
   deliveryErrors(a){return this.db.prepare("SELECT id,state,error,created_at FROM outbox WHERE assistant_id=? AND state IN ('failed','unknown') ORDER BY seq DESC LIMIT 10").all(a);}
   close(){this.db.close();}
 }

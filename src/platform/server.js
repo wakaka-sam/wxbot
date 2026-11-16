@@ -6,12 +6,13 @@ import { PlatformStore, AppError } from './store.js';
 import { Auth } from './auth.js';
 import { Engine } from './engine.js';
 import { startMailNotifications, mailOwner } from './mail-notifications.js';
+import { Uploads } from './uploads.js';
 import { MEDIA_ID } from './attachments.js';
 import {listWorkspace,previewWorkspaceFile,openWorkspaceFile,changeMemory} from './workspace-files.js';
 import { describeMedia } from '../media.js';
 import { Downloads, handleDownloads } from '../downloads.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
-const publicFiles={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/files.js':['files.js','text/javascript; charset=utf-8'],'/schedules.js':['schedules.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
+const publicFiles={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/uploads.js':['uploads.js','text/javascript; charset=utf-8'],'/files.js':['files.js','text/javascript; charset=utf-8'],'/schedules.js':['schedules.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY',
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
 export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR||join(root,'platform-data')),publicUrl=process.env.PLATFORM_PUBLIC_URL,adminUsername=process.env.PLATFORM_ADMIN_USERNAME||'admin',adminPassword=process.env.PLATFORM_ADMIN_PASSWORD,engineOptions={},downloadTokenFile=process.env.WXBOT_DOWNLOAD_TOKEN_FILE}={}){
@@ -19,6 +20,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
  const store=new PlatformStore(dir),auth=new Auth(store,{secure:publicUrl?.startsWith('https://')}),engine=new Engine(store,dir,{publishDownload:(...args)=>downloads.publish(...args),...engineOptions});
  if(!store.users().some(u=>u.role==='admin')){if(!adminPassword){store.close();throw new Error('首次启动请设置 PLATFORM_ADMIN_PASSWORD（至少 10 位），用于初始化管理员');}await auth.register(adminUsername,adminPassword,'admin');}
  if(process.env.PLATFORM_MAIL_USER_ID)mailOwner(store);
+ engine.uploads=new Uploads(store,dir);await engine.uploads.cleanup({recover:true});
  await engine.init();
  const mailNotifications=process.env.PLATFORM_MAIL_NOTIFY==='1'?await startMailNotifications(engine,join(dir,'mail-notify.sock')):null;
  const clients=new Map();let closing=false;
@@ -26,7 +28,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
  engine.on('event',event=>{for(const[res,c]of clients){if(c.assistantId!==event.assistantId)continue;if(!auth.current(c.req)){res.end();clients.delete(res);continue;}sendEvent(res,'update',event);}});
  const heartbeat=setInterval(()=>{for(const[res,c]of clients){if(!auth.current(c.req)){res.end();clients.delete(res);}else res.write(': heartbeat\n\n');}},15000);heartbeat.unref();
  let cleaning=downloads.cleanup().catch(()=>{});
- const cleanup=setInterval(()=>{cleaning=cleaning.then(()=>downloads.cleanup()).catch(()=>{});},600000);cleanup.unref();
+ const cleanup=setInterval(()=>{cleaning=cleaning.then(async()=>{await downloads.cleanup();await engine.uploads.cleanup();}).catch(()=>{});},600000);cleanup.unref();
  const server=http.createServer(async(req,res)=>{
   const send=(status,data,type='application/json; charset=utf-8')=>{res.writeHead(status,{...headers,'Content-Type':type});res.end(type.startsWith('application/json')?JSON.stringify(data):data);};
   try{
@@ -43,6 +45,15 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    }
    if(req.method==='POST'){
     if(req.headers['x-wxbot-platform']!=='1')return send(403,{error:'缺少操作校验标识'});
+    const uploadMatch=url.pathname.match(/^\/api\/assistants\/([a-f0-9-]+)\/uploads$/);
+    if(uploadMatch){
+     const user=auth.current(req);if(!user)throw new AppError(401,'请先登录');
+     const id=uploadMatch[1];store.owned(id,user);engine.requireActive(id);engine.requireConnected(id);
+     auth.rate(`upload:${user.id}`,30,60000);
+     if(Number(req.headers['content-length'])>20*1024*1024)throw new AppError(413,'每个文件最多 20 MB');
+     const name=url.searchParams.get('name');if(!name||name.length>500)throw new AppError(400,'需要文件名（最多 500 字符）');
+     return send(201,{attachment:await engine.uploads.receive(id,name,req)});
+    }
     const maxBody=url.pathname.endsWith('/memory/save')?262144:65536;const chunks=[];let length=0;for await(const c of req){length+=c.length;if(length>maxBody)throw new AppError(413,'请求过大');chunks.push(c);}try{body=length?JSON.parse(Buffer.concat(chunks).toString()):{};}catch{throw new AppError(400,'请求格式无效');}
     if(!body||typeof body!=='object'||Array.isArray(body))throw new AppError(400,'请求格式无效');
    }else if(req.method!=='GET')return send(405,{error:'请求方法不支持'});
@@ -72,11 +83,12 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    }
    const match=path.match(/^\/api\/assistants\/([a-f0-9-]+)(?:\/(.+))?$/);if(!match)throw new AppError(404,'接口不存在');
    const[,id,action='']=match,a=store.owned(id,user,req.method==='GET'),readOnly=a.user_id!==user.id;
-   if(action==='schedules'){
+   if(action==='schedules'||action.startsWith('schedules/')){
     if(readOnly)throw new AppError(403,'只能管理自己的自动任务');
+    if(action!=='schedules'){const m=action.match(/^schedules\/([a-f0-9-]+)\/runs$/);if(!m||req.method!=='GET')throw new AppError(404,'接口不存在');return send(200,engine.schedules.history(id,m[1],{before:Number(url.searchParams.get('before')||Number.MAX_SAFE_INTEGER)}));}
     if(req.method==='GET')return send(200,engine.schedules.request(id,{action:'list'}));
     auth.rate(`schedule:${user.id}`,60,60000);
-    return send(200,engine.schedules.request(id,body));
+    return send(200,engine.requestSchedule(id,body));
    }
    const workspace=join(dir,'assistants',id,'harness','workspace');
    if(action==='files'){
@@ -112,7 +124,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
       const attachment=store.attachment(id,mediaId);
       if(!attachment||attachment.error)throw new AppError(404,'附件不存在或下载失败');
       const runtime=await engine.runtime(a);
-      let bytes;try{bytes=await runtime.channel.readAttachment(attachment);}catch{throw new AppError(404,'附件文件已不可用');}
+      let bytes;try{bytes=await engine.readAttachment(id,attachment,runtime);}catch{throw new AppError(404,'附件文件已不可用');}
       const description=describeMedia(bytes,attachment.name);
       if(readOnly)store.audit(user.id,'view-attachment',id);
       const inline=description.kind==='image'&&url.searchParams.get('download')!=='1';
@@ -135,7 +147,7 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    }
    if(action==='activate'||action==='deactivate')throw new AppError(410,'默认助手无需激活或停止，请使用微信连接管理');
    if(action==='rename'){store.rename(id,user,body.name);return send(200,{assistant:engine.snapshot(id)});}
-   if(action==='messages'){auth.rate(`message:${user.id}`,120,60000);return send(202,engine.submit(id,body.text,'web',body.requestId));}
+   if(action==='messages'){auth.rate(`message:${user.id}`,120,60000);return send(202,engine.submit(id,body.text,'web',body.requestId,body.attachments));}
    if(action==='interrupt'){await engine.interrupt(id);return send(200,{assistant:engine.snapshot(id)});}
    if(action.startsWith('channel/'))return send(200,{assistant:await engine.channelCommand(id,action.slice(8),body)});
    throw new AppError(404,'接口不存在');

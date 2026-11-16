@@ -5,9 +5,9 @@ import { EventEmitter } from 'node:events';
 // Codex CLI's stdio app-server protocol; no shell/TUI keystrokes are involved.
 export class CodexClient extends EventEmitter {
   constructor({ command = process.env.CLAWBOT_CODEX_BIN || 'codex', cwd, args = [], requestTimeout = 30000,
-    turnTimeout = 15 * 60 * 1000, env = process.env } = {}) {
+    turnTimeout = 15 * 60 * 1000, stallTimeout = 0, maxToolFailures = 0, env = process.env } = {}) {
     super();
-    Object.assign(this, { requestTimeout, turnTimeout });
+    Object.assign(this, { requestTimeout, turnTimeout, stallTimeout, maxToolFailures });
     this.pending = new Map(); this.nextId = 1; this.active = null; this.dead = false;
     this.child = spawn(command, [...args, 'app-server', '--listen', 'stdio://'], {
       cwd, env: { ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
@@ -70,6 +70,12 @@ export class CodexClient extends EventEmitter {
     }
     const active = this.active, p = message.params || {};
     if (!active || p.threadId !== active.threadId || (active.turnId && p.turnId && active.turnId !== p.turnId)) return;
+    active.lastActivity=Date.now();
+    if(message.method==='item/completed'&&['commandExecution','mcpToolCall','fileChange'].includes(p.item?.type)){
+      const item=p.item,failed=item.status==='failed'||item.error||item.result?.isError||(typeof item.exitCode==='number'&&item.exitCode!==0);
+      active.toolFailures=failed?active.toolFailures+1:0;
+      if(this.maxToolFailures&&active.toolFailures>=this.maxToolFailures){this.abortTurn(new Error(`连续 ${this.maxToolFailures} 次工具执行失败，已停止反复尝试；请检查工具或调整请求后重试`));return;}
+    }
     if (message.method === 'turn/started') { active.turnId = p.turn?.id || p.turnId; active.onEvent?.({ type: 'started', turnId: active.turnId }); }
     if (message.method === 'item/agentMessage/delta') {
       const item = active.items.get(p.itemId) || { text: '' };
@@ -99,10 +105,11 @@ export class CodexClient extends EventEmitter {
   }
   async run({ threadId, input, cwd, onProgress, onEvent, turnOptions = {} }) {
     if (this.active) throw new Error('当前 Codex 轮次尚未结束');
-    let timer;
+    let timer,watchdog;
     const done = new Promise((resolve, reject) => {
-      this.active = { threadId, items: new Map(), onProgress, onEvent, resolve, reject };
-      timer = setTimeout(() => reject(new Error('Codex 本轮执行超时，请检查任务后重试')), this.turnTimeout);
+      this.active = { threadId, items: new Map(), onProgress, onEvent, resolve, reject, lastActivity:Date.now(), toolFailures:0 };
+      timer = setTimeout(() => this.abortTurn(new Error('本轮达到执行时限，已停止；请检查执行结果后重试，避免重复操作')), this.turnTimeout);
+      if(this.stallTimeout)watchdog=setInterval(()=>{if(this.active&&Date.now()-this.active.lastActivity>this.stallTimeout)this.abortTurn(new Error('执行器长时间没有响应，已停止本轮；请稍后重试'));},Math.min(1000,this.stallTimeout));
     });
     // Attach rejection handling before awaiting turn/start, since completion can race the RPC reply.
     done.catch(() => {});
@@ -112,8 +119,9 @@ export class CodexClient extends EventEmitter {
       onEvent?.({ type: 'started', turnId: this.active.turnId });
       onProgress?.({ turnId: this.active.turnId, activity: 'Codex 正在处理…' });
       return await done;
-    } finally { clearTimeout(timer); this.active = null; }
+    } finally { clearTimeout(timer); clearInterval(watchdog); this.active = null; }
   }
+  abortTurn(error){const active=this.active;if(!active)return;void this.interrupt().catch(()=>{});active.reject(error);}
   async interrupt() {
     if (this.active?.turnId && !this.dead) await this.request('turn/interrupt', { threadId: this.active.threadId, turnId: this.active.turnId });
   }
