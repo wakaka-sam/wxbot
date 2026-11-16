@@ -28,7 +28,7 @@ export class Schedules {
  request(assistantId,request,now=Date.now()){
   if(!request||typeof request!=='object'||Array.isArray(request))throw new AppError(400,'任务请求格式无效');
   const allowed=request.action==='add'?['action','requestId','name','prompt','spec']:request.action==='list'?['action']:['action','id'];
-  if(Object.keys(request).some(k=>!allowed.includes(k)))throw new AppError(400,'任务请求包含不支持的字段');
+  if(Object.keys(request).some(k=>!allowed.includes(k)))throw new AppError(400,`任务请求包含不支持的字段；允许字段：${allowed.join(', ')}。时间规则使用 spec，例如 {"type":"once","at":"含时区的未来ISO时间"}。运行 wxbot-schedule --help 查看完整示例。`);
   if(request.action==='list')return {tasks:this.list(assistantId),now:new Date(now).toISOString(),defaultTimezone:'Asia/Shanghai'};
   if(request.action==='add')return this.add(assistantId,request,now);
   if(!['pause','resume','remove'].includes(request.action)||typeof request.id!=='string')throw new AppError(400,'任务操作无效');

@@ -24,6 +24,8 @@
 
 ## 工具与接口
 
+每轮输入均附带当前工具的完整参数说明，兼容升级前创建的旧会话；也可运行 `wxbot-schedule --help` 查看完整一次性示例，不需要轮次标识。参数校验失败会指出允许字段并提示帮助入口。
+
 每轮提供私有 `wxbot-schedule --turn <本轮 UUID>`，stdin 接收 JSON：
 
 ```json
@@ -45,3 +47,5 @@
 验证：`npm run check`、`npm test`、`npm run test:platform`。真实隔离执行器验收：在 sg 加载现有部署环境后运行 `PLATFORM_AGENT_TEST=1 node scripts/test-platform-schedules.mjs`，仅使用临时合成用户、模拟微信通道和独立模型会话，退出清理。
 
 部署回滚若需切换到不支持自动任务的旧代码，应先停止平台，将未开始的 `kind='schedule'` 作业标为 cancelled、活动规则标为 paused，再切回旧版本启动。保留新增表和列即可；不要把旧数据库备份直接覆盖回线上而丢失新会话。
+
+旧会话升级验收可额外设置 `PLATFORM_LEGACY_HARNESS=/隔离旧版本/src/platform/adapters/codex.js`，脚本会先创建旧版会话再用新版恢复同一 thread，验证创建和到点执行；仍仅操作临时测试数据。

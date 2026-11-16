@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir,writeFile,readFile,symlink,rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn,execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fixture,register,create,until } from './helpers.js';
 import { normalizeSchedule,nextSchedule } from '../../src/platform/schedule-time.js';
 import { createRequestRelay } from '../../src/request-relay.js';
@@ -46,6 +47,9 @@ test('new users can manage only their own tasks; creation is idempotent and surv
   assert.equal((await alice.request(url,{...input(),assistantId:b})).status,400);
   const admin=f.client();await admin.request('/api/login',{username:'admin',password:'Admin-test-password-731'});
   assert.equal((await admin.request(url)).status,403);
+  const adminId=await create(admin),adminTask=await admin.request(`/api/assistants/${adminId}/schedules`,input());
+  assert.equal(adminTask.status,200);assert.equal(adminTask.data.task.assistant_id,adminId);
+  assert.equal((await alice.request(`/api/assistants/${adminId}/schedules`)).status,404);
   await f.restart();const tasks=(await alice.request(url)).data.tasks;assert.equal(tasks.length,1);assert.equal(tasks[0].id,first.data.task.id);
   assert.equal((await alice.request(url,{action:'pause',id:tasks[0].id})).data.task.status,'paused');
   assert.equal((await alice.request(url,{action:'resume',id:tasks[0].id})).data.task.status,'active');
@@ -122,6 +126,11 @@ test('real CLI relay rejects stale turns and symlinks, preserving literal prompt
   await installGrokVideoTools(home,{visibleHome:home});await installScheduleTools(home,{visibleHome:home});
   relay=await createRequestRelay(home,r=>f.app.engine.schedules.request(id,r),{namespace:'wxbot-schedules',label:'自动任务',maxBytes:65536});
   const executable=join(home,'.local/bin/wxbot-schedule'),request={...input(),prompt:'中文\n$(touch /tmp/never-run) `literal`'};
+  const help=await promisify(execFile)(executable,['--help']);
+  assert.match(help.stdout,/"spec":\{"type":"once","at":/);
+  assert.match(help.stdout,/"name":/);assert.match(help.stdout,/"action":"list"/);
+  assert.match(help.stdout,/pause\|resume\|remove/);
+  await assert.rejects(cli(executable,relay.turn,{...input(),runAt:new Date(Date.now()+1800000).toISOString()}),/允许字段：action, requestId, name, prompt, spec/);
   const result=await cli(executable,relay.turn,request);assert.equal(result.task.prompt,request.prompt);
   assert.equal((await cli(executable,relay.turn,request)).duplicate,true);
   await assert.rejects(cli(executable,relay.turn,{...input(),userId:'other'}),/字段/);
@@ -141,11 +150,17 @@ test('Harness exposes current time and schedule CLI relay for natural-language c
   const h=Object.create(CodexHarness.prototype);let called=false;
   Object.assign(h,{dir,cwd:f.dir,threadId:'synthetic-thread',client:{async run({input}){
    assert.match(input[0].text,/本轮当前时间：/);
+   // The resumed thread may retain its original developer instructions. The
+   // current turn must be independently sufficient to construct the request.
+   assert.match(input[0].text,/"spec":\{"type":"once","at":/);
+   assert.match(input[0].text,/wxbot-schedule --help/);
+   assert.match(input[0].text,/"action":"list"/);
    const turn=input[0].text.match(/wxbot-schedule --turn ([a-f0-9-]{36})/)[1];
-   const receipt=await cli(join(home,'.local/bin/wxbot-schedule'),turn,inputRequest);
-   assert.equal(receipt.task.spec.timezone,'Asia/Shanghai');called=true;return {text:'创建成功'};
+   const example=input[0].text.split('\n').find(line=>line.startsWith('{"action":"add"')&&line.includes('"type":"once"'));
+   const request=JSON.parse(example);request.requestId=randomUUID();
+   const receipt=await cli(join(home,'.local/bin/wxbot-schedule'),turn,request);
+   assert.equal(receipt.task.spec.type,'once');called=true;return {text:'创建成功'};
   }}});
-  const inputRequest=input({type:'daily',time:'09:00'});
   await h.run({text:'每天早上9点提醒我喝水',onEvent:()=>{},onSchedule:r=>f.app.engine.schedules.request(id,r)});assert(called);
  }finally{await f.close();}
 });

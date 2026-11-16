@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { PlatformStore } from '../src/platform/store.js';
 import { Engine } from '../src/platform/engine.js';
 import { CodexHarness } from '../src/platform/adapters/codex.js';
@@ -13,8 +14,18 @@ if(process.env.PLATFORM_AGENT_TEST!=='1')throw new Error('Set PLATFORM_AGENT_TES
 const dir=await mkdtemp(join(tmpdir(),'wxbot-schedule-e2e-')),store=new PlatformStore(dir),fake=mocks();
 const user=store.addUser('schedule-test','not-a-login-hash'),id=store.assistants(user.id)[0].id;
 const engine=new Engine(store,dir,{channelFactory:fake.options.channelFactory,harnessFactory:o=>new CodexHarness(o)});
-let timeout;
+let timeout,legacy;
 try{
+ if(process.env.PLATFORM_LEGACY_HARNESS){
+  const {CodexHarness:Legacy}=await import(pathToFileURL(process.env.PLATFORM_LEGACY_HARNESS));
+  legacy=new Legacy({dir:join(dir,'assistants',id,'harness')});
+  await legacy.prepare({onThread:thread=>store.thread(id,thread)});
+  timeout=setTimeout(()=>void legacy.close(),180000);
+  await legacy.run({text:'记住测试标记 LEGACY-SCHEDULE-739，只回复已记住。',onEvent:()=>{}});
+  clearTimeout(timeout);await legacy.close();
+  console.log(JSON.stringify({legacyThreadSeeded:true}));
+ }
+ const previousThread=store.assistant(id).thread_id;
  await engine.init();clearInterval(engine.scheduleTimer);
  const r=engine.runtimes.get(id);await r.channel.pair({id:'synthetic-bot',userId:'synthetic-owner'});
  // Test exact natural language, the actual sandbox command and host callback.
@@ -24,7 +35,7 @@ try{
  clearTimeout(timeout);
  const task=engine.schedules.list(id)[0];assert.equal(task.spec.type,'once');assert.match(task.prompt,/SCHEDULE-E2E-739/);
  assert(task.next_run_at>Date.now()+20*60000&&task.next_run_at<Date.now()+40*60000);
- assert(fake.sent.length>0);console.log(JSON.stringify({naturalLanguageCreation:'passed',sandboxTool:'passed',spec:task.spec}));
+ assert(fake.sent.length>0);if(previousThread)assert.equal(store.assistant(id).thread_id,previousThread);console.log(JSON.stringify({legacyResume:Boolean(previousThread),naturalLanguageCreation:'passed',sandboxTool:'passed',spec:task.spec}));
  const sentBefore=fake.sent.length;
  // Advance only the scheduler clock. Do not wait or mutate a production task.
  engine.tickSchedules(task.next_run_at+1);engine.tickSchedules(task.next_run_at+1);
@@ -35,4 +46,4 @@ try{
  assert(fake.sent.every(s=>s.binding.userId==='synthetic-owner'));
  assert.equal(store.db.prepare('SELECT COUNT(*) n FROM jobs WHERE schedule_id=?').get(task.id).n,1);
  console.log(JSON.stringify({scheduledExecution:'passed',deduplication:'passed',ownerOnlyDelivery:'passed',realWechatMessages:0}));
-}finally{clearTimeout(timeout);await engine.close();store.close();await rm(dir,{recursive:true,force:true});}
+}finally{clearTimeout(timeout);await legacy?.close();await engine.close();store.close();await rm(dir,{recursive:true,force:true});}
