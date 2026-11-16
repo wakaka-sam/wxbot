@@ -6,6 +6,7 @@ import { AppError } from './store.js';
 import { parseCommand,submitCommand } from './commands.js';
 import {submitMemoryCommand} from './memory-commands.js';
 import {notificationPreferences,isQuiet,notificationKind,buildDigests} from './notification-preferences.js';
+import {Organizer} from './organizer.js';
 import { Schedules } from './schedules.js';
 import { migrateSingleAssistant } from './single-assistant.js';
 import { WechatChannel } from './adapters/wechat.js';
@@ -17,18 +18,25 @@ const TOOL_STATUS_TEXTS=new Set(['正在执行命令…','正在修改工作文�
 const uuidFor=value=>{const h=createHash('sha256').update(value).digest('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;};
 export class Engine extends EventEmitter {
   constructor(store,dir,{channelFactory=o=>new WechatChannel(o),harnessFactory=o=>new CodexHarness(o),publishDownload}={}){
-    super();Object.assign(this,{store,dir,channelFactory,harnessFactory,publishDownload});this.runtimes=new Map();this.opening=new Map();this.locks=new Map();this.closed=false;this.schedules=new Schedules(store);
+    super();Object.assign(this,{store,dir,channelFactory,harnessFactory,publishDownload});this.runtimes=new Map();this.opening=new Map();this.locks=new Map();this.closed=false;this.schedules=new Schedules(store);this.organizer=new Organizer(store);
   }
   publish(id,type,data){this.emit('event',{assistantId:id,type,data});}
   async init(){await migrateSingleAssistant(this.store,this.dir);this.store.recover();this.schedules.settle();for(const a of this.store.assistants()){const r=await this.runtime(a);if(a.active){await r.channel.start();this.reconcile(a.id,r);this.wake(a.id);this.deliver(a.id);}}this.tickSchedules();this.scheduleTimer=setInterval(()=>this.tickSchedules(),10000);this.scheduleTimer.unref();}
   tickSchedules(now=Date.now()){
     if(this.closed)return;
+    try{this.organizer.tick(this,now);}catch(error){for(const id of this.runtimes.keys())this.publish(id,'error',{message:`待办检查失败：${error.message}`});}
     for(const id of this.runtimes.keys())this.deliver(id);
     for(const task of this.schedules.due(now)){
       if(!this.connected(task.assistant_id))continue;
       try{const result=this.schedules.enqueue(task.id,now);if(result){this.publish(result.assistantId,'message',result.message);this.wake(result.assistantId);}}
       catch(error){this.publish(task.assistant_id,'error',{message:`自动任务入队失败：${error.message}`});}
     }
+  }
+  organizeFromTool(id,run,request){
+    if(this.closed||this.runtimes.get(id)?.active!==run||run.interrupted)throw new AppError(409,'资料管理轮次已结束');
+    this.requireActive(id);
+    if(run.scheduled&&!['list','get','recent'].includes(request?.action))throw new AppError(403,'自动执行期间不能修改待办或收藏');
+    const result=this.organizer.request(id,request);this.publish(id,'organizer',{});return result;
   }
   scheduleFromTool(id,run,request){
     if(this.closed||this.runtimes.get(id)?.active!==run||run.interrupted)throw new AppError(409,'任务管理轮次已结束');
@@ -208,7 +216,9 @@ export class Engine extends EventEmitter {
       const prefs=notificationPreferences(this.store,id);buildDigests(this,id,prefs);
       for(const row of this.store.deliveries(id)){
         if(this.closed||!this.store.assistant(id)?.active||!this.connected(id))break;
+        if(this.store.delivery(row.id)?.state!=='pending')continue;
         const p=JSON.parse(row.payload),notice=notificationKind(this.store,row,p);
+        if(!this.organizer.reminderValid(id,p)){this.store.deliveryState(row.id,'skipped','待办已完成或修改');continue;}
         if(notice==='progress'&&prefs.finalOnly){this.store.deliveryState(row.id,'skipped','按通知偏好仅推送最终回复');continue;}
         if((notice!=='direct'&&isQuiet(prefs))||(notice==='task'&&!p.attachment&&prefs.digestMinutes)){r.notificationDeferred=true;continue;}
         if(!p.attachment&&TOOL_STATUS_TEXTS.has(p.text.trim())){this.store.deliveryState(row.id,'skipped');continue;}
@@ -277,7 +287,7 @@ export class Engine extends EventEmitter {
         }
         const prompt=[selected.map(j=>j.prompt).join('\n\n[后续输入]\n'),prepared.text,prepared.notices.length?'附件预览说明（预览不等于完整内容，有原文件路径时可直接读取；不要编造未读取内容）：\n'+prepared.notices.join('\n'):''].filter(Boolean).join('\n\n');
         run.submitted=true;
-        const task=r.harness.run({text:prompt,images:prepared.images,onSchedule:request=>this.scheduleFromTool(id,run,request),onSend:request=>this.sendFromTool(id,run,sendBinding,request),onEvent:event=>{
+        const task=r.harness.run({text:prompt,images:prepared.images,onOrganize:request=>this.organizeFromTool(id,run,request),onSchedule:request=>this.scheduleFromTool(id,run,request),onSend:request=>this.sendFromTool(id,run,sendBinding,request),onEvent:event=>{
           if(r.active!==run)return;
           if(event.type==='started'){if(run.interrupted||!this.connected(id))void r.harness.interrupt().catch(()=>{});return;}
           if(run.interrupted||!this.connected(id))return;

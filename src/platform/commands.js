@@ -6,6 +6,8 @@ import {searchMessages,messageContext} from './history-search.js';
 import {notificationPreferences,updateNotifications} from './notification-preferences.js';
 import {TASK_TEMPLATES,templateDraft} from './task-templates.js';
 import {normalizeSchedule,nextSchedule} from './schedule-time.js';
+import {organizerCommand} from './organizer-commands.js';
+import {guideCommand} from './guide.js';
 import { MAX_MEDIA_SIZE } from '../media.js';
 export {parseCommand};
 const states={active:'启用',paused:'暂停',queued:'等待执行',completed:'结束',cancelled:'取消',pending:'排队',running:'执行中',done:'完成',failed:'失败',interrupted:'中断'};
@@ -31,9 +33,11 @@ function rule(spec){
 }
 function taskView(task){return `任务：${short(task.name)}\nID：${task.id}\n状态：${states[task.status]||task.status} · ${task.mode==='reminder'?'轻量提醒':'智能任务'}\n规则：${rule(JSON.parse(task.spec))}\n下次：${time(task.next_run_at)}（北京时间）\n内容：${short(task.prompt,600)}`;}
 function duration(value){const m=value.match(/^(\d+)(m|h|d|分钟|小时|天)$/i);if(!m)invalid('时间请使用 30m、2h、1d 等格式。');const minutes=Number(m[1])*({m:1,h:60,d:1440,'分钟':1,'小时':60,'天':1440}[m[2].toLowerCase()]);if(!Number.isSafeInteger(minutes)||minutes<1||minutes>525600)invalid('提醒时间范围为 1 分钟到 1 年。');return minutes;}
-function perform(engine,id,command,requestId,now){
+function perform(engine,id,command,requestId,now,source){
  const {name,args}=command,words=args?args.split(/\s+/):[];
  const a=engine.store.assistant(id),runtime=engine.runtimes.get(id),connection=runtime?.channel.snapshot();
+ if(name==='guide')return guideCommand(engine,id,args,source,requestId,now);
+ if(['todo','save','collection'].includes(name))return organizerCommand(engine,id,command,requestId,now);
  if(name==='help')return {text:help(args)};
  if(name==='search'){
   const m=args.match(/^(?:before:(\d+)\s+)?([\s\S]+)$/);if(!m)invalid('用法：/search 关键词');
@@ -54,7 +58,7 @@ function perform(engine,id,command,requestId,now){
    else invalid('用法：/notify；/notify quiet 23:00 08:00；/notify quiet off；/notify final on|off；/notify digest 30|off');
   }
   const p=patch?updateNotifications(engine.store,id,patch):notificationPreferences(engine.store,id);
-  return {text:`通知偏好${patch?'已保存':''}\n免打扰：${p.quiet?p.quiet.start+'–'+p.quiet.end+'（北京时间）':'关闭'}\n只推最终回复：${p.finalOnly?'开启':'关闭'}\n任务文字摘要：${p.digestMinutes?p.digestMinutes+' 分钟合并一次':'关闭'}\n免打扰仅延后自动回复和任务通知，网页照常显示；命令回执与主动发送不受影响。附件不合并，轻量提醒也受免打扰和摘要设置影响。`};
+  return {text:`通知偏好${patch?'已保存':''}\n免打扰：${p.quiet?p.quiet.start+'–'+p.quiet.end+'（北京时间）':'关闭'}\n只推最终回复：${p.finalOnly?'开启':'关闭'}\n任务文字摘要：${p.digestMinutes?p.digestMinutes+' 分钟合并一次':'关闭'}\n免打扰仅延后自动回复和任务通知，网页照常显示；命令回执与主动发送不受影响。附件不合并，轻量提醒也受免打扰和摘要设置影响；待办提醒受免打扰影响，但不合并摘要。`};
  }
  if(name==='templates'){
   if(args)invalid('用法：/templates');
@@ -71,7 +75,7 @@ function perform(engine,id,command,requestId,now){
 
  if(['status','settings','whoami','stop'].includes(name)&&args)invalid(help(name));
  if(name==='whoami')return {text:`账号：${engine.store.user(a.user_id).username}\n助手：${a.name}\n角色：${engine.store.user(a.user_id).role==='admin'?'管理员':'普通用户'}\n仅操作当前账号自己的任务、会话和文件。`};
- if(name==='settings')return {text:`当前参数（只读）\n模型：${runtime?.harness.model||process.env.PLATFORM_MODEL||'gpt-6-astra'}\n默认时区：Asia/Shanghai（北京时间）\n自动任务：最多 20 个未结束，间隔最短 1 分钟\n附件：每条最多 10 个，网页总量 ${MAX_MEDIA_SIZE/1024/1024} MB\n智能执行：单轮最多 ${RUNTIME_LIMITS.turnTimeout/60000} 分钟，无活动 ${RUNTIME_LIMITS.stallTimeout/60000} 分钟停止\n工具错误：连续 ${RUNTIME_LIMITS.maxToolFailures} 次失败或任务工具同错 ${RUNTIME_LIMITS.sameScheduleErrors} 次停止\n微信：每次新微信输入后最多 ${connection?.replyBudget?.limit||10} 条回复，网页输入不刷新额度\n轻量提醒到点不调用模型；/status 查看实时状态。`};
+ if(name==='settings')return {text:`当前参数（只读）\n模型：${runtime?.harness.model||process.env.PLATFORM_MODEL||'gpt-6-astra'}\n默认时区：Asia/Shanghai（北京时间）\n自动任务：最多 20 个未结束，间隔最短 1 分钟\n待办与收藏：各最多 1000 条，待办截止时间在未来一年内\n附件：每条最多 10 个，网页总量 ${MAX_MEDIA_SIZE/1024/1024} MB\n智能执行：单轮最多 ${RUNTIME_LIMITS.turnTimeout/60000} 分钟，无活动 ${RUNTIME_LIMITS.stallTimeout/60000} 分钟停止\n工具错误：连续 ${RUNTIME_LIMITS.maxToolFailures} 次失败或任务工具同错 ${RUNTIME_LIMITS.sameScheduleErrors} 次停止\n微信：每次新微信输入后最多 ${connection?.replyBudget?.limit||10} 条回复，网页输入不刷新额度\n轻量提醒到点不调用模型；/status 查看实时状态。`};
  if(name==='status'){
   const counts=engine.store.db.prepare('SELECT state,COUNT(*) n FROM outbox WHERE assistant_id=? GROUP BY state').all(id),count=state=>counts.find(r=>r.state===state)?.n||0;
   const budget=connection?.replyBudget,active=runtime?.active;
@@ -120,7 +124,7 @@ export function submitCommand(engine,id,text,source,key,command,attachments=[],p
   const message=store.addMessage(id,{id:randomUUID(),role:'user',kind:'command',text,source,sourceKey,attachments});
   if(source==='web')engine.uploads?.claim(id,attachments);
   let outcome;
-  try{if(attachments.length)invalid('快捷命令请单独发送，不要携带附件。附件已保留在本条消息；如要分析附件，请用普通文字重新发送。');outcome=preparedOutcome||perform(engine,id,command,requestId,Date.now());}
+  try{if(attachments.length)invalid('快捷命令请单独发送，不要携带附件。附件已保留在本条消息；如要分析附件，请用普通文字重新发送。');outcome=preparedOutcome||perform(engine,id,command,requestId,Date.now(),source);}
   catch(error){if(!(error instanceof AppError))throw error;outcome={text:`命令未执行：${error.message}`,error:true};}
   // WeChat folds soft line breaks; separate command rows as paragraphs.
   const reply=store.addMessage(id,{role:'system',kind:'command',source:'command',sourceKey:'command-reply:'+sourceKey,text:outcome.text.replace(/\n+/g,'\n\n'),state:outcome.error?'error':'complete'});

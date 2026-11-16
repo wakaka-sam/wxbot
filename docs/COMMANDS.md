@@ -4,6 +4,10 @@
 
 | 命令 | 用途与示例 |
 | --- | --- |
+| `/guide` | 分步创建待办、提醒、收藏和通知设置，预览后确认 |
+| `/todo today` | 查看今日及逾期待办；`/todo add 2h high 提交方案` 新建 |
+| `/save link URL 标题` | 收藏链接，也支持 message 消息编号 / file 附件ID |
+| `/collection unread` | 稍后读列表；show/read/unread/tags/delete 管理，网页可导出 |
 | `/help` | 列出命令；`/help task` 查看具体参数 |
 | `/status` | 当前连接、运行状态、等待作业、投递数量、微信回复剩余额度 |
 | `/settings` | 只读查看当前模型、默认时区、任务/附件限制、超时与工具失败阈值；别名 `/config` |
@@ -43,3 +47,5 @@
 验证：`node --test test/platform/commands.test.js` 和 `node scripts/test-platform-commands-browser.mjs`，配合完整平台测试和原有网页浏览器回归。
 
 搜索、通知、快捷记忆和模板的完整规则与示例见 [工作空间工具](WORKSPACE-TOOLS.md)。快捷记忆使用持久化操作意图与版本检查恢复跨文件系统重试。
+
+待办、收藏和分步向导的完整示例、提醒取消规则与数据格式见 [个人事务工具](ORGANIZER.md)。

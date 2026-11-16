@@ -15,7 +15,7 @@ import {listWorkspace,previewWorkspaceFile,openWorkspaceFile,changeMemory} from 
 import { describeMedia } from '../media.js';
 import { Downloads, handleDownloads } from '../downloads.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
-const publicFiles={'/workspace-tools.js':['workspace-tools.js','text/javascript; charset=utf-8'],'/task-templates.js':['../../src/platform/task-templates.js','text/javascript; charset=utf-8'],'/':['index.html','text/html; charset=utf-8'],'/commands.js':['commands.js','text/javascript; charset=utf-8'],'/command-catalog.js':['../../src/platform/command-catalog.js','text/javascript; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/uploads.js':['uploads.js','text/javascript; charset=utf-8'],'/files.js':['files.js','text/javascript; charset=utf-8'],'/schedules.js':['schedules.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
+const publicFiles={'/organizer.js':['organizer.js','text/javascript; charset=utf-8'],'/workspace-tools.js':['workspace-tools.js','text/javascript; charset=utf-8'],'/task-templates.js':['../../src/platform/task-templates.js','text/javascript; charset=utf-8'],'/':['index.html','text/html; charset=utf-8'],'/commands.js':['commands.js','text/javascript; charset=utf-8'],'/command-catalog.js':['../../src/platform/command-catalog.js','text/javascript; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/uploads.js':['uploads.js','text/javascript; charset=utf-8'],'/files.js':['files.js','text/javascript; charset=utf-8'],'/schedules.js':['schedules.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8'],'/favicon.svg':['../favicon.svg','image/svg+xml']};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY',
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
 export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR||join(root,'platform-data')),publicUrl=process.env.PLATFORM_PUBLIC_URL,adminUsername=process.env.PLATFORM_ADMIN_USERNAME||'admin',adminPassword=process.env.PLATFORM_ADMIN_PASSWORD,engineOptions={},downloadTokenFile=process.env.WXBOT_DOWNLOAD_TOKEN_FILE}={}){
@@ -86,6 +86,12 @@ export async function createPlatform({dir=resolve(process.env.PLATFORM_DATA_DIR|
    }
    const match=path.match(/^\/api\/assistants\/([a-f0-9-]+)(?:\/(.+))?$/);if(!match)throw new AppError(404,'接口不存在');
    const[,id,action='']=match,a=store.owned(id,user,req.method==='GET'),readOnly=a.user_id!==user.id;
+   if(action==='organizer'){
+    if(readOnly)throw new AppError(403,'只能管理自己的待办和收藏');
+    auth.rate(`organizer:${user.id}`,120,60000);
+    const request=req.method==='GET'?{kind:url.searchParams.get('kind'),action:'list',filter:url.searchParams.get('filter')||undefined,q:url.searchParams.get('q')||undefined,tag:url.searchParams.get('tag')||undefined,page:Number(url.searchParams.get('page')||1)}:body;
+    const result=engine.organizer.request(id,request);engine.publish(id,'organizer',{});return send(200,result);
+   }
    if(['history/search','history/context','notifications'].includes(action)){
     if(readOnly)throw new AppError(403,'只能查看或设置自己的助手');
     if(action==='notifications'){

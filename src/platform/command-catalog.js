@@ -1,5 +1,9 @@
 // Shared, public command vocabulary. Contains no account/runtime configuration.
 export const COMMANDS=[
+ {name:'guide',summary:'分步创建待办、提醒、收藏和设置',usage:'/guide；/guide 选项或内容；/guide back|cancel',example:'/guide'},
+ {name:'todo',summary:'管理待办、截止时间和优先级',usage:'/todo [today|all|done-list]；/todo add 时间|none high|normal|low 标题；/todo done ID；/todo edit ID title|due|priority 值；/todo delete ID',example:'/todo add 30m high 提交方案'},
+ {name:'save',summary:'收藏链接、消息或文件',usage:'/save link URL [标题]；/save message 消息编号 [标题]；/save file 附件ID [标题]',example:'/save link https://example.com 参考资料'},
+ {name:'collection',summary:'查询收藏、标签和稍后读',usage:'/collection [list|unread]；/collection show|read|unread|delete ID；/collection tags ID 标签1,标签2；/collection search 关键词；/collection tag 标签；/collection export',example:'/collection unread'},
  {name:'help',summary:'查看全部命令和用法',usage:'/help [命令名]',example:'/help task'},
  {name:'status',summary:'查看连接、执行、队列和微信额度',usage:'/status',example:'/status'},
  {name:'settings',summary:'查看模型、时区和功能限制',usage:'/settings',example:'/settings'},

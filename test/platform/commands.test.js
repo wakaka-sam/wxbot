@@ -8,7 +8,7 @@ const post=(c,id,text,requestId=randomUUID())=>c.request(`/api/assistants/${id}/
 test('命令边界明确，支持大小写和别名，不把普通文字、文件路径和双斜杠当命令',()=>{
  assert.equal(parseCommand(' /STATUS ').name,'status');assert.equal(parseCommand('/config').name,'settings');assert.equal(parseCommand('/?').name,'help');
  for(const text of ['请解释 /status','/workspace/a.txt','//status','https://x.test/a','```\n/stop\n```'])assert.equal(parseCommand(text),null);
- assert.equal(parseCommand('/task abcdefgh pause').args,'abcdefgh pause');assert.equal(COMMANDS.length,14);
+ assert.equal(parseCommand('/task abcdefgh pause').args,'abcdefgh pause');assert.equal(COMMANDS.length,18);
 });
 
 test('未绑定微信也可查帮助参数、账号和任务；无模型调用，不泄露部署凭据',async()=>{
