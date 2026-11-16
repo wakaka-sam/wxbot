@@ -12,7 +12,7 @@ const invalid=message=>{throw new AppError(400,message);};
 function help(name=''){
  name=name.replace(/^\//,'').toLowerCase();name=COMMAND_ALIASES[name]||name;
  if(name){const c=COMMANDS.find(c=>c.name===name);if(!c)invalid('没有这个命令。发送 /help 查看全部命令。');return `${c.summary}\n用法：${c.usage}\n示例：${c.example}`+(name==='task'?'\nID 支持至少 8 位的唯一前缀，先用 /tasks 查询。run 会真实执行并发送结果，不改变原计划；cancel 取消整个规则，pause 暂停后可恢复。history 返回最近 3 次执行，带游标可翻页。':name==='stop'?'\n保留会话和文件；周期规则仍启用，暂停周期请用 /task ID pause。已经产生的外部操作不会撤销。':name==='remind'?'\n默认北京时间。m=分钟，h=小时，d=天。workdays 仅周一至周五，不判断法定节假日。正文原样发送，不调用模型。':name==='settings'?'\n参数只读，不能通过命令更改部署模型或资源限制。':'');}
- return '快捷命令（微信和网页通用）\n'+COMMANDS.map(c=>`/${c.name} — ${c.summary}`).join('\n')+'\n\n/help 命令名 查看示例；例如 /help remind。\n命令请单独发送，不携带附件。查询不会打断当前回复。\n如需把 / 开头的内容当普通聊天，使用双斜杠，例如 //status。';
+ return '快捷命令\n'+COMMANDS.map(c=>`/${c.name} — ${c.summary}`).join('\n')+'\n\n/help 命令名 查看示例；例如 /help remind。\n命令请单独发送，不携带附件。查询不会打断当前回复。\n如需把 / 开头的内容当普通聊天，使用双斜杠，例如 //status。';
 }
 function resolveTask(engine,id,ref){
  if(!/^[a-f0-9-]{8,36}$/i.test(ref||''))invalid('任务 ID 无效；请先 /tasks，复制完整 ID 或至少 8 位唯一前缀。');
@@ -84,7 +84,8 @@ export function submitCommand(engine,id,text,source,key,command,attachments=[]){
   let outcome;
   try{if(attachments.length)invalid('快捷命令请单独发送，不要携带附件。附件已保留在本条消息；如要分析附件，请用普通文字重新发送。');outcome=perform(engine,id,command,requestId,Date.now());}
   catch(error){if(!(error instanceof AppError))throw error;outcome={text:`命令未执行：${error.message}`,error:true};}
-  const reply=store.addMessage(id,{role:'system',kind:'command',source:'command',sourceKey:'command-reply:'+sourceKey,text:outcome.text,state:outcome.error?'error':'complete'});
+  // WeChat folds soft line breaks; separate command rows as paragraphs.
+  const reply=store.addMessage(id,{role:'system',kind:'command',source:'command',sourceKey:'command-reply:'+sourceKey,text:outcome.text.replace(/\n+/g,'\n\n'),state:outcome.error?'error':'complete'});
   if(source==='wechat')for(const d of engine.textDeliveries(id,reply.text,`command:${reply.id}`))store.queueDelivery(d.id,id,d.payload);
   store.audit(store.assistant(id).user_id,'command-'+command.name,message.id);
   return {message,reply,duplicate:false,...outcome};
