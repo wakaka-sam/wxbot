@@ -35,12 +35,12 @@
 
 先下载并解压 [v1.0.1 源码包](https://github.com/wakaka-sam/wxbot/releases/tag/v1.0.1)，进入 `wxbot-v1.0.1/`。下列 systemd 示例使用 root 部署路径；安装到其他目录时，必须同时修改单元文件中的 `WorkingDirectory`、`ExecStart` 以及 env 文件中的路径。
 
-需要 Linux、systemd/cgroup v2、可嵌套 user namespace 的 bubblewrap、Node.js ≥22.13、Python 3、poppler-utils（`pdftotext`）以及已登录 Codex。当前实际验证版本是 Codex CLI 0.163.0；安装到独立目录，不覆盖现有 CLI：
+需要 Linux、systemd/cgroup v2、可嵌套 user namespace 的 bubblewrap、Node.js ≥22.13、Python 3、poppler-utils（`pdftotext`）以及已登录 Codex。当前实际验证版本是 Codex CLI 0.169.1；安装到独立目录，不覆盖现有 CLI：
 
 ```bash
 npm ci --omit=dev
 # Debian/Ubuntu 文档提取依赖：apt-get install -y python3 poppler-utils
-npm install --prefix /root/.local/share/wxbot-platform-tools @openai/codex@0.163.0
+npm install --prefix /root/.local/share/wxbot-platform-tools/releases/0.169.1 --save-exact @openai/codex@0.169.1
 # 根据系统安装 bubblewrap，设置 PLATFORM_BWRAP 指向 bwrap 可执行文件。
 # PLATFORM_SYSTEMD_RUN 默认 /usr/bin/systemd-run；服务需要创建系统 scope 的权限。
 # 浏览器运行时使用独立只读工具目录：
@@ -58,7 +58,7 @@ systemctl enable --now wxbot-platform
 curl http://127.0.0.1:3211/health
 ```
 
-当前机器通过独立安装的 gpt-6.1-sol 验证成功；gpt-6-astra 曾返回容量不足。模型由 `PLATFORM_MODEL` 配置；示例模型名称是本次部署的验证配置，不保证其他账号可用，请按自己的账号调整。现有旧工作台模型不受影响。管理员仅在数据库没有管理员时初始化，重启不会重置已修改的密码。首次登录后在用户旁齿轮修改密码，会使其他登录会话失效。
+平台默认模型为 `gpt-6.2-sol`，可通过 `PLATFORM_MODEL` 覆盖；`/settings` 显示当前运行模型。修改部署配置后，在空闲时重启平台服务，现有会话会以新模型继续，保留原线程和历史。部署账号的模型可用性需实际验证。现有旧工作台模型不受影响。管理员仅在数据库没有管理员时初始化，重启不会重置已修改的密码。首次登录后在用户旁齿轮修改密码，会使其他登录会话失效。
 
 服务默认只监听 loopback；从自己的电脑使用 SSH 转发后访问：
 

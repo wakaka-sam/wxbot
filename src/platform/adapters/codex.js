@@ -38,7 +38,7 @@ const INSTRUCTIONS=`你是用户创建的私人助手。网页与微信共用同
 // Harness contract: prepare(), stageAttachment(bytes), run(), interrupt(), close().
 // Events only contain public assistant content: delta/message/started. Never reasoning/tool stdout.
 export class CodexHarness {
-  constructor({dir,userId,model=process.env.PLATFORM_MODEL||'gpt-6-astra',command=process.env.PLATFORM_CODEX_BIN||'/usr/bin/codex',authFile=process.env.PLATFORM_CODEX_AUTH||'/root/.codex/auth.json',authSource=process.env.PLATFORM_CODEX_AUTH_SOURCE,isolated=true}){
+  constructor({dir,userId,model=process.env.PLATFORM_MODEL||'gpt-6.2-sol',command=process.env.PLATFORM_CODEX_BIN||'/usr/bin/codex',authFile=process.env.PLATFORM_CODEX_AUTH||'/root/.codex/auth.json',authSource=process.env.PLATFORM_CODEX_AUTH_SOURCE,isolated=true}){
     Object.assign(this,{dir,userId,model,command,authFile,authSource,isolated});this.client=null;this.threadId=null;this.interrupted=false;
   }
   async prepare({threadId,onThread}){
